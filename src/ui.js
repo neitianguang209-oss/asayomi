@@ -78,8 +78,13 @@ export function dayNotice(kind, date) {
       const changed = await store.pull();
       if (!changed) { toast(store.S.status === 'idle' ? 'まだ届いていません' : '通信できませんでした'); btn.disabled = false; btn.textContent = '確かめる'; }
     });
-    return h('div', { class: 'notice' },
-      h('span', null, '今日（' + mdDate(today) + '）の分はまだ届いていません。届くまで ' + mdDate(date) + ' の分を出しています。'), btn);
+    // 朝7時すぎまでは「まだ来ない」のがふつうなので、そう書く
+    const jst = new Date(Date.now() + 9 * 3600 * 1000);
+    const early = jst.getUTCHours() * 60 + jst.getUTCMinutes() < 7 * 60 + 20;
+    const text = early
+      ? '今日（' + mdDate(today) + '）の分は朝7時ごろに届きます。それまで ' + mdDate(date) + ' の分を出しています。'
+      : '今日（' + mdDate(today) + '）の分はまだ届いていません。届くまで ' + mdDate(date) + ' の分を出しています。';
+    return h('div', { class: 'notice' }, h('span', null, text), btn);
   }
   return null;
 }
