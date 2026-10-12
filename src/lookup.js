@@ -62,17 +62,61 @@ async function exactPages(terms) {
   }
   return keys.map((k) => exacts.get(k) || null);
 }
+// 「IMF」「ETF」のように意味がいくつかある言葉: 意味の一覧ページに並んでいる順に、それぞれのページを取る
+async function meaningsOf(title) {
+  const page = (await wikiPages('&prop=revisions&rvprop=content&rvslots=main&titles=' + encodeURIComponent(title)))[0];
+  const rev = page && page.revisions && page.revisions[0];
+  const text = String((rev && rev.slots && rev.slots.main && rev.slots.main.content) || '');
+  const names = [];
+  for (const line of text.split('\n')) {
+    const m = /^\*.*?\[\[([^\]|#]+)/.exec(line); // 箇条書きの行の、最初のリンク先
+    const name = m ? m[1].trim() : '';
+    if (name && name.indexOf(':') < 0 && names.indexOf(name) < 0) names.push(name);
+  }
+  const pages = await exactPages(names.slice(0, 12));
+  return pages.filter((p, i) => usable(p) && pages.findIndex((x) => x && x.title === p.title) === i);
+}
+// 意味がいくつかあるときは、ニュースに出てきそうな意味を先にする(「ECB」は暗号の方式より欧州中央銀行)。
+//  - ページの名前の漢字2文字の並びが、いま読んでいる記事に出てくる(「欧州」「中央」「銀行」)
+//  - 名前と説明に、ニュースでよく出る分野の言葉がある
+// どちらも無ければ、一覧ページに並んでいる順のまま。
+const NEWSY = ['経済', '金融', '銀行', '通貨', '金利', '物価', '株', '投資', '市場', '企業', '貿易', '財政', '政府', '政策', '政治', '国際', '条約', '協定',
+  '外交', '安全保障', '軍', '法律', '規制', 'エネルギー', '原子力', '自動車', '半導体', '人工知能', 'デジタル', '情報技術', 'インターネット', '気候', '環境'];
+function byContext(pages, it) {
+  const entry = it && store.searchIndex().find((x) => x.it === it);
+  const text = entry ? it.data.title + ' ' + entry.raw : '';
+  const score = (p) => {
+    const seen = new Set();
+    for (let i = 0; text && i + 2 <= p.title.length; i++) {
+      const g = p.title.slice(i, i + 2);
+      if (/^[一-鿿]{2}$/.test(g) && text.indexOf(g) >= 0) seen.add(g);
+    }
+    const about = p.title + ' ' + brief(p.extract);
+    // 1つだけの一致はたまたまのことが多い(「健康診断」の「診断」)。2つ以上で「記事に出てくる」とみなす
+    return (seen.size >= 2 ? 2 : 0) + (NEWSY.some((w) => about.indexOf(w) >= 0) ? 1 : 0);
+  };
+  return pages.map((p, i) => ({ p, i, s: score(p) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.p);
+}
 // 言葉 → { page, exact, others }。同じ名前のページが無ければ、検索でいちばん近いページ(others はほかの候補)。
+// 意味がいくつかある言葉は { meanings }(ページの並び)。
 function wikiLookup(term) {
   return cached(lookups, norm(term), async () => {
     const exact = (await exactPages([term]))[0];
     if (usable(exact)) return { page: exact, exact: true, others: [] };
-    // まずページの名前に含むもの(「ウォーシュ」→「ケビン・ウォーシュ」)。無ければ本文もふくめて探す
     const t = titleOf(term).replace(/"/g, ' ');
+    if (t.length < 2) return { page: null, exact: false, others: [] }; // 1文字(「高」など)は、ぴったりのページが無ければ探さない
+    if (exact && !exact.missing && isDisambig(exact)) {
+      const meanings = await meaningsOf(exact.title);
+      if (meanings.length) return { meanings };
+    }
+    // ページの名前にその言葉を含むものを探す(「ウォーシュ」→「ケビン・ウォーシュ」)。
+    // 本文のどこかに出てくるだけのページは、関係ないことが多いので出さない
+    const k = norm(t);
+    const near = (p) => { const name = norm(p.title); return name.indexOf(k) >= 0 || (name.length >= 2 && k.indexOf(name) >= 0); };
     const search = async (words) => (await wikiPages('&generator=search&gsrnamespace=0&gsrlimit=6&gsrsearch=' + encodeURIComponent(words) + INTRO))
-      .filter(usable).sort(byIndex);
-    const found = await search('intitle:"' + t + '"');
-    if (found.length < 4) for (const p of await search(t)) if (!found.some((x) => x.title === p.title)) found.push(p);
+      .filter((p) => usable(p) && near(p)).sort(byIndex);
+    const [named, loose] = await Promise.all([search('intitle:"' + t + '"'), search(t)]);
+    const found = named.concat(loose.filter((p) => !named.some((x) => x.title === p.title)));
     return { page: found[0] || null, exact: false, others: found.slice(1, 7).map((p) => p.title) };
   });
 }
@@ -276,8 +320,13 @@ export function openTermSheet(name, ctx) {
           }
         }
         return wikiLookup(term);
-      }).then((r) => {
-        if (!r || my !== seq) return;
+      }).then((found) => {
+        if (!found || my !== seq) return;
+        let r = found;
+        if (r.meanings) {
+          const ranked = byContext(r.meanings, o.it);
+          r = { page: ranked[0], exact: false, many: true, others: ranked.slice(1, 7).map((p) => p.title) };
+        }
         clear(wk);
         wk.classList.remove('wait');
         if (!r.page) {
@@ -286,7 +335,7 @@ export function openTermSheet(name, ctx) {
         }
         page = r.page;
         if (/^https:\/\/ja\.wikipedia\.org\//.test(page.fullurl || '')) wikiA.href = page.fullurl;
-        wk.append(head(r.exact ? '' : 'いちばん近いページ'));
+        wk.append(head(r.exact ? '' : r.many ? '意味がいくつかあります' : 'いちばん近いページ'));
         if (norm(page.title) !== norm(term)) wk.append(h('b', null, page.title));
         wk.append(h('p', null, brief(page.extract)),
           h('a', { class: 'lk-more', href: wikiA.href, target: '_blank', rel: 'noopener noreferrer' }, '続きを Wikipedia で読む', icon('out', 14)));
@@ -299,7 +348,7 @@ export function openTermSheet(name, ctx) {
           rel.replaceChildren(h('small', null, label), ...list.map((t) => h('button', { class: 'chip', type: 'button', onclick: () => hop(t) }, t)));
         };
         if (r.others.length) {
-          chips('ほかの候補', r.others);
+          chips(r.many ? 'ほかの意味' : 'ほかの候補', r.others);
         } else {
           rel.hidden = false;
           rel.classList.add('wait');
@@ -427,21 +476,43 @@ function pick(text, i, known) {
   if (c) {
     const segs = segments(text);
     const k = segs.findIndex((x) => x.index <= i && i < x.index + x.segment.length);
-    const w = k >= 0 && segs[k].isWordLike ? [segs[k].index, segs[k].index + segs[k].segment.length] : null;
-    const r = c === 'H' ? null : run(text, i, false);
-    // 同じ種類の文字の並びと単語の切れ目の、広い方をとる(「消費者物価指数」も「値下がり」も拾える)
-    const main = r && w ? [Math.min(r[0], w[0]), Math.max(r[1], w[1])] : r || w;
-    const digits = main && /^[\d０-９.,]*$/.test(text.slice(main[0], main[1])); // 「2926円」の数字のところ
-    if (main && !digits && (c !== 'H' || main[1] - main[0] >= 2)) { // 数字と、ひらがな1文字(助詞)は調べない
-      add(main);
-      const nx = segs[k + 1];
-      if (main[1] - main[0] === 1 && nx && nx.index === main[1] && nx.isWordLike && /[一-鿿]/.test(nx.segment)) {
-        add([main[0], nx.index + nx.segment.length]); // 1文字だけになったら、次の単語とつないだ形も(「利」＋「上げ」)
+    const end = (x) => x.index + x.segment.length;
+    const kana = (s) => /[ぁ-ゖ]/.test(s);
+    // その単語が、押した文字と同じ種類の文字だけでできているか
+    const pure = (x) => !!x && x.isWordLike && Array.from(x.segment).every((ch) => cls(ch) === c);
+    const joint = c === 'T' ? /^[・＝]$/ : c === 'L' ? /^[.\-&+]$/ : null; // 「キング・ハーリド」「S&P500」のつなぎ
+    const grow = (from, step) => {
+      for (let j = from; ;) {
+        if (pure(segs[j + step])) j += step;
+        else if (joint && segs[j + step] && joint.test(segs[j + step].segment) && pure(segs[j + 2 * step])) j += 2 * step;
+        else return j;
       }
+    };
+    let main = null;
+    if (k < 0 || !segs[k].isWordLike) {
+      main = c === 'H' ? null : run(text, i, false); // 単語の切れ目が取れないブラウザでは、文字の種類だけで決める
+    } else if (c !== 'H' && pure(segs[k])) {
+      // 同じ種類の文字でできた単語を、左右につなげる(「消費」「者」「物価」「指数」→「消費者物価指数」)
+      const b = grow(k, 1);
+      main = [segs[grow(k, -1)].index, end(segs[b])];
+      // 漢字1文字だけになったら、送りがなのある次の単語とつなぐ(「利」＋「上げ」、「出」＋「回り」)
+      const nx = segs[b + 1];
+      if (c === 'K' && main[1] - main[0] === 1 && nx && nx.isWordLike && cls(nx.segment[0]) === 'K' && kana(nx.segment)) main = [main[0], end(nx)];
+    } else {
+      // 送りがなのある単語など(「値下がり」「続く」)はそのまま。前が漢字1文字ならつなぐ(「出」＋「回り」の「回り」を押したとき)
+      main = [segs[k].index, end(segs[k])];
+      const pv = segs[k - 1];
+      const lone = pv && pv.isWordLike && pv.segment.length === 1 && cls(pv.segment) === 'K' && !(segs[k - 2] && segs[k - 2].isWordLike && cls(segs[k - 2].segment.slice(-1)) === 'K');
+      if (lone && cls(segs[k].segment[0]) === 'K' && kana(segs[k].segment)) main = [pv.index, main[1]];
+    }
+    const word = main ? text.slice(main[0], main[1]) : '';
+    const skip = /^[\d０-９.,]*$/.test(word) || (/^[ぁ-ゖー]*$/.test(word) && word.length <= 2); // 数字(「2926円」の2926)と、短いひらがな(助詞・「です」)は調べない
+    if (main && !skip) {
+      add(main);
       if (c !== 'H') {
-        const wide = run(text, i, true);
+        const raw = run(text, i, true);
+        const wide = [Math.min(raw[0], main[0]), Math.max(raw[1], main[1])];
         add(wide);
-        add(r);
         // 広い範囲を単語で区切り、押した単語から左に2つ・右に3つまでつないだ形を並べる
         const cuts = [wide[0], wide[1]];
         for (const x of segs) {
