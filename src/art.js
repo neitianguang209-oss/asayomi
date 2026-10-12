@@ -21,6 +21,7 @@ const I = {
   flame: '<path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2 1-3.2 2-4.2.4 1.4 1 2 1.6 2.2C10.200 8.500 11 5.500 12 3z"/>',
   talk: '<path d="M4 5h16v11H9l-5 4z"/>',
   flow: '<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.200v7.600M8 6.800l8 4M8 17.200l8-4"/>',
+  out: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M11 6H6.500A1.500 1.500 0 0 0 5 7.500v10A1.500 1.500 0 0 0 6.500 19h10a1.500 1.500 0 0 0 1.500-1.500V13"/>',
 };
 export function icon(name, size) {
   const s = size || 22;

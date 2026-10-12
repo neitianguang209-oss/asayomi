@@ -6,7 +6,8 @@ import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
 import { dayNotice, reviewNudge, dayNav, xButton } from './ui.js';
-import { actionBar, openTermSheet } from './actions.js';
+import { actionBar } from './actions.js';
+import { openTermSheet, attachLookup } from './lookup.js';
 import { openCalendar } from './me.js';
 
 const view = { tab: 'top', termQ: '', termSort: 'new', termShown: 60 };
@@ -262,7 +263,7 @@ function fillTerms(feed) {
   };
   input.addEventListener('input', () => { view.termQ = input.value; view.termShown = 60; paint(); });
   sortBtn.addEventListener('click', () => { view.termSort = view.termSort === 'new' ? 'freq' : 'new'; paint(); });
-  feed.append(h('div', { class: 'hint' }, 'ニュースの「用語メモ」がここにたまっていきます。タップすると、復習に入れたり思考メモに送ったりできます。'),
+  feed.append(h('div', { class: 'hint' }, 'ニュースの「用語メモ」がここにたまっていきます。タップすると、くわしく調べたり、復習に入れたり思考メモに送ったりできます。'),
     h('div', { class: 'tsearch' }, input, sortBtn), list, more);
   paint();
 }
@@ -284,14 +285,16 @@ export function newsArticle(it) {
     if (s.h) ain.append(h('h2', null, s.h));
     for (const para of s.ps) if (para) ain.append(rich(h('p', { class: 'b' }), para));
   }
+  ain.append(h('p', { class: 'lkhint' }, icon('search', 13), 'わからない言葉は、長押しで調べられます'));
+  attachLookup(ain, it);
 
   const terms = (d.terms || []).filter((t) => Array.isArray(t) && t[0] && t[1]);
   if (terms.length) {
-    const box = h('div', { class: 'terms' }, h('div', { class: 'tl' }, '用語メモ', h('small', null, 'タップで復習・思考メモへ')));
+    const box = h('div', { class: 'terms' }, h('div', { class: 'tl' }, '用語メモ', h('small', null, 'タップでくわしく・復習へ')));
     for (const t of terms) {
       const tt = h('span', { class: 'tt' }, t[0]);
       if (store.st.has(store.cardIdTerm(t[0]))) tt.append(h('i', null, '復習中'));
-      box.append(h('button', { class: 'term', type: 'button', onclick: () => openTermSheet(t[0]) }, tt, h('span', { class: 'td' }, t[1])));
+      box.append(h('button', { class: 'term', type: 'button', onclick: () => openTermSheet(t[0], { it }) }, tt, h('span', { class: 'td' }, t[1])));
     }
     ain.append(box);
   }

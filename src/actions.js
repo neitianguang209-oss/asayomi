@@ -1,10 +1,9 @@
-// 記事の下のボタン: 思考メモに送る・保存・ToDoに入れる・復習に入れる。用語のシートもここ。
-import { h, stableUuid, todayJST, norm, mdDate, stripMarkup } from './util.js';
+// 記事の下のボタン: 思考メモに送る・保存・ToDoに入れる・復習に入れる。(用語のシートは lookup.js)
+import { h, stableUuid, todayJST, mdDate } from './util.js';
 import { APP_URL, MEMO_TAG } from './config.js';
 import * as store from './store.js';
 import { icon } from './art.js';
 import { openSheet, toast } from './ui.js';
-import { go } from './nav.js';
 
 export function linkOf(it) {
   return APP_URL + '#/' + it.kind + '/' + it.date + '/' + it.n;
@@ -12,7 +11,7 @@ export function linkOf(it) {
 
 /* ---------- 思考メモ ----------
    思考メモ本体と同じ入口(shikou_memo_sync)を通す。IDは記事ごとに固定なので、2回送っても増えない。 */
-async function sendMemo(seed, body) {
+export async function sendMemo(seed, body) {
   const now = new Date().toISOString();
   const id = stableUuid(seed);
   const res = await store.rpc('shikou_memo_sync', {
@@ -35,7 +34,7 @@ function memoOf(it) {
   const line = d.gist || (d.title + '\n' + store.briefOf(it));
   return { seed: 'news-' + it.date + '-' + it.n, body: line + '\n\n詳しく：' + linkOf(it) };
 }
-function sendError(e) {
+export function sendError(e) {
   if (navigator.onLine === false) return '圏外のようです。つながってからもう一度どうぞ。';
   if (e && e.message === 'unconfirmed') return '保存を確認できませんでした。思考メモで届いているか確かめてください。';
   return '送れませんでした。少し待ってもう一度どうぞ。';
@@ -161,62 +160,3 @@ export function actionBar(it) {
   return box;
 }
 
-/* ---------- 用語のシート(ニュース記事・用語帳・検索から開く) ---------- */
-export function openTermSheet(name) {
-  const e = store.terms().get(norm(name));
-  if (!e) return;
-  const cid = store.cardIdTerm(e.term);
-  const sid = 'sent:w:' + e.key;
-  openSheet((sheet, close) => {
-    const rev = h('button', { class: 'sbtn', type: 'button' });
-    const paintRev = () => {
-      const c = store.st.get(cid);
-      rev.className = 'sbtn' + (c ? ' done' : '');
-      rev.replaceChildren(icon(c ? 'check' : 'cards', 20),
-        h('span', null, c ? '復習に入っています' : '復習に入れる',
-          h('small', null, c ? '次は ' + mdDate(c.due) + '。押すと外します' : 'あしたから、忘れかけた頃にクイズで出します')));
-    };
-    paintRev();
-    rev.addEventListener('click', () => {
-      if (store.st.has(cid)) store.removeCard(cid); else store.addCard(cid);
-      paintRev();
-    });
-
-    const memo = h('button', { class: 'sbtn', type: 'button' });
-    const paintMemo = (msg) => {
-      const done = store.st.has(sid);
-      memo.className = 'sbtn' + (done ? ' done' : '');
-      memo.disabled = done;
-      memo.replaceChildren(icon(done ? 'check' : 'memo', 20),
-        h('span', null, done ? '思考メモに保存済み' : '思考メモに送る', h('small', null, msg || '用語と説明を「知識」タグで保存します')));
-    };
-    paintMemo();
-    memo.addEventListener('click', async () => {
-      memo.disabled = true;
-      const first = e.uses[0];
-      const link = first ? APP_URL + '#/news/' + first.date + '/' + first.n : APP_URL;
-      try {
-        await sendMemo('term-' + e.key, e.term + '：' + e.desc + '\n\n詳しく：' + link);
-        store.st.set(sid, { at: new Date().toISOString() });
-        paintMemo();
-      } catch (err) {
-        memo.disabled = false;
-        paintMemo(sendError(err));
-      }
-    });
-
-    const uses = h('ul', { class: 'uses' });
-    for (const u of e.uses.slice(0, 6)) {
-      const it = store.item('news', u.date, u.n);
-      if (!it) continue;
-      uses.append(h('li', null, h('button', { type: 'button', onclick: () => { close(); go('#/news/' + u.date + '/' + u.n); } },
-        h('small', null, mdDate(u.date) + ' のニュース'), it.data.title)));
-    }
-    sheet.append(
-      h('h3', null, e.term),
-      h('p', { class: 'sd' }, e.desc),
-      rev, memo,
-      h('div', { class: 'sr-h', style: { margin: '14px 2px 0' } }, 'この言葉が出てきた記事（' + e.uses.length + '）'),
-      uses);
-  });
-}

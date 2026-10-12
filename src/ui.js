@@ -34,17 +34,20 @@ export function currentLayer() { return layer; }
 
 /* ---------- 下から出るシート ---------- */
 let sheetWrap = null;
-export function openSheet(build) {
+let sheetOnClose = null;
+export function openSheet(build, onClose) {
   closeSheet();
   const sheet = h('div', { class: 'sheet', role: 'dialog', 'aria-modal': 'true' }, h('div', { class: 'grab' }));
   const wrap = h('div', { class: 'sheet-wrap', onclick: (e) => { if (e.target === wrap) closeSheet(); } }, sheet);
   build(sheet, closeSheet);
   document.body.append(wrap);
   sheetWrap = wrap;
+  sheetOnClose = onClose || null;
   return sheet;
 }
 export function closeSheet() {
   if (sheetWrap) { sheetWrap.remove(); sheetWrap = null; }
+  if (sheetOnClose) { const fn = sheetOnClose; sheetOnClose = null; fn(); } // 閉じたあとの片づけ(本文につけた印を消す、など)
 }
 
 /* ---------- トースト ---------- */

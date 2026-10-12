@@ -1,6 +1,6 @@
 // Service Worker(手書き・ビルド不要)。全パスは相対。GitHub Pages のサブパス配信でも壊れないようにするため。
 // アプリを更新して公開するたび、内容を問わず毎回 v を上げる(上げないと古い画面が出続ける)。
-const CACHE_NAME = 'asayomi-v2';
+const CACHE_NAME = 'asayomi-v3';
 const FONT_CACHE = 'asayomi-fonts';
 const APP_SHELL = [
   './',
@@ -15,6 +15,7 @@ const APP_SHELL = [
   './src/nav.js',
   './src/ui.js',
   './src/actions.js',
+  './src/lookup.js',
   './src/trivia.js',
   './src/news.js',
   './src/review.js',

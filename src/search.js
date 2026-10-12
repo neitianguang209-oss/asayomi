@@ -6,16 +6,16 @@ import * as store from './store.js';
 import { icon, glyph, colorOf } from './art.js';
 import { go, back } from './nav.js';
 import { xButton } from './ui.js';
-import { openTermSheet } from './actions.js';
+import { openTermSheet } from './lookup.js';
 
 const view = { q: '', filter: 'all', genre: null, shown: 40, scroll: 0 };
 // 配列や null が混ざっていてもそのまま足せる append
 const put = (target, ...kids) => append(target, kids);
 
-export function presetSearch(filter, genre) {
-  view.filter = filter || 'all';
+export function presetSearch(filter, genre, q) {
+  view.filter = ['all', 't', 'n', 'w', 'saved'].indexOf(filter) >= 0 ? filter : 'all';
   view.genre = genre && GENRES[genre] ? genre : null;
-  view.q = '';
+  view.q = q || '';
   view.shown = 40;
   view.scroll = 0;
 }

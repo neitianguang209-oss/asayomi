@@ -124,7 +124,7 @@ async function route() {
   const pages = {
     review: () => reviewPage(),
     search: () => {
-      if (p[1]) { presetSearch(p[1], p[2]); history.replaceState(history.state, '', '#/search'); }
+      if (p[1]) { presetSearch(p[1], p[2], p[3]); history.replaceState(history.state, '', '#/search'); }
       return searchPage();
     },
     me: () => mePage(),
