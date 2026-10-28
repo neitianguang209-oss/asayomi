@@ -7,6 +7,7 @@ import { go, replace, back } from './nav.js';
 import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast } from './ui.js';
 import { actionBar } from './actions.js';
 import { openCalendar } from './me.js';
+import { claudeButton } from './talk.js';
 
 const view = { tab: 'all', past: 10 };
 
@@ -56,6 +57,7 @@ export function renderTrivia(root, date) {
 
   const notice = dayNotice('trivia', date);
   if (notice) wrap.append(notice);
+  wrap.append(h('div', { class: 'lalt tvl' }, claudeButton('trivia', date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く(続けてニュースも)')));
   if (isLatest) { const nudge = reviewNudge(); if (nudge) wrap.append(nudge); }
 
   // タブ: すべて → その日に出たジャンル → これまでの雑学
@@ -194,7 +196,7 @@ export function triviaArticle(it) {
   const isLatest = it.date === store.latest('trivia');
   const art = h('article', { class: 'art' });
 
-  art.append(h('h1', null, d.title), meta(it, { date: true }));
+  art.append(h('h1', null, d.title), meta(it, { date: true }), claudeButton('trivia', it.date, it.n));
   if (store.svgOf(it)) art.append(h('div', { class: 'fig' }, illust(it)));
   if (d.gist) {
     art.append(h('div', { class: 'gist' }, h('span', null, d.legacy ? 'この話のメモ' : 'ひとことで言うと'), h('p', null, d.gist)));

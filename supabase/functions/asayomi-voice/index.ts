@@ -233,24 +233,38 @@ const ASK_SYSTEM = [
   '質問の聞き取りが崩れていても、記事の内容から意図をくみ取って答える。',
 ].join('\n');
 
-// Claude との会話用: その日のニュースを素の文字で返す(GET ?d=日付 [&n=番号])。
+// Claude との会話用: その日の記事を素の文字で返す(GET ?k=news|trivia &d=日付 [&n=番号])。
 // Claude アプリにこの URL を渡すと、読んでから音声で話し相手になってくれる。中身はアプリで公開している記事と同じ
+const GENRE: Record<string, string> = { food: '食べ物', word: '言葉', thing: 'モノ', psych: '心理学', season: '季語', history: '歴史', science: '科学', culture: '文化', sports: 'スポーツ' };
+function triviaText(d: any) {
+  const out = ['題: ' + clean(d.title)];
+  if (d.gist) out.push('ひとことで: ' + clean(d.gist));
+  for (const s of d.sections || []) out.push((s.h ? '【' + clean(s.h) + '】' : '') + (Array.isArray(s.p) ? s.p : [s.p]).filter(Boolean).map(clean).join(''));
+  if (d.talk) out.push('会話で使える一言: ' + clean(d.talk));
+  if (d.extra?.text) out.push('【' + clean(d.extra.label || 'ひとこと') + '】' + clean(d.extra.text));
+  const q = d.quiz;
+  if (q?.q && Array.isArray(q.choices)) out.push('クイズ: ' + clean(q.q) + ' 選択肢: ' + q.choices.map((c: string, i: number) => (i + 1) + '.' + clean(c)).join(' ') + ' 答え: ' + clean(q.choices[q.answer] ?? '') + (q.why ? '(' + clean(q.why) + ')' : ''));
+  return out.join('\n');
+}
 async function newsText(url: URL) {
+  const kind = url.searchParams.get('k') === 'trivia' ? 'trivia' : 'news';
+  const name = kind === 'news' ? 'ニュース' : '雑学';
   let date = url.searchParams.get('d') || '';
   const n = parseInt(url.searchParams.get('n') || '', 10);
   if (!isDate(date)) {
-    const { data } = await db.from('asayomi_days').select('date').eq('kind', 'news').order('date', { ascending: false }).limit(1).maybeSingle();
+    const { data } = await db.from('asayomi_days').select('date').eq('kind', kind).order('date', { ascending: false }).limit(1).maybeSingle();
     date = data?.date ?? todayJST();
   }
-  let q = db.from('asayomi_items').select('n,data').eq('kind', 'news').eq('date', date).order('n');
+  let q = db.from('asayomi_items').select('n,data').eq('kind', kind).eq('date', date).order('n');
   if (isN(n)) q = q.eq('n', n);
   const { data: rows } = await q;
-  const head = 'あさよみ ' + date + ' のニュース' + (isN(n) ? '(' + n + '本目)' : '(' + (rows?.length ?? 0) + '本)');
+  const head = 'あさよみ ' + date + ' の' + name + (isN(n) ? '(' + n + '本目)' : '(' + (rows?.length ?? 0) + '本)');
   const body = (rows ?? []).map((r: any) => {
     const d = r.data || {};
-    return '■ ' + r.n + '本目 [' + (d.catn || CATS[d.cat] || '') + ']\n' + articleText(d);
+    const tag = kind === 'news' ? (d.catn || CATS[d.cat] || '') : (d.genreLabel || GENRE[d.genre] || '');
+    return '■ ' + name + r.n + '本目 [' + tag + ']\n' + (kind === 'news' ? articleText(d) : triviaText(d));
   }).join('\n\n');
-  return new Response(head + '\n\n' + (body || 'この日のニュースは見つかりませんでした。') + '\n', {
+  return new Response(head + '\n\n' + (body || 'この日の' + name + 'は見つかりませんでした。') + '\n', {
     headers: { ...CORS, 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
   });
 }

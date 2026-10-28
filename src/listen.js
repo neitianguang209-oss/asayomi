@@ -10,6 +10,7 @@ import * as store from './store.js';
 import { icon } from './art.js';
 import { openSheet, closeSheet, toast } from './ui.js';
 import { go } from './nav.js';
+import { openClaude } from './talk.js';
 
 const FN = SB_URL + '/functions/v1/asayomi-voice';
 const SPEEDS = [0.8, 1, 1.25, 1.5, 1.75, 2];
@@ -414,6 +415,7 @@ function hideBar() {
   document.body.classList.remove('has-pl');
 }
 export const isListening = (date, n) => P.shown && P.date === date && (!n || P.curN === n);
+export function pauseListening() { if (P.audio && !P.audio.paused) P.audio.pause(); }
 export const playingNow = () => !!(P.audio && !P.audio.paused && P.audio.src.startsWith('blob:'));
 
 /* ---------- 下のプレーヤー ---------- */
@@ -633,7 +635,7 @@ export function openAsk(opt) {
     sheet.append(h('h3', null, '質問する'),
       h('p', { class: 'sd' }, '「' + it.data.title + '」について、わからないことを聞けます。'),
       log, ans, mic, h('div', { class: 'krow' }, ta, sendBtn),
-      h('p', { class: 'sd sm' }, 'Claudeと声で話しながら聞きたいときは ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClaude(date, n); } }, 'Claudeで開く')));
+      h('p', { class: 'sd sm' }, 'Claudeと声で話しながら聞きたいときは ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClaude('news', date, n); } }, 'Claudeで開く')));
   }, () => {
     if (rec) { try { rec.abort(); } catch (e) { /* もう止まっている */ } rec = null; }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -677,71 +679,6 @@ export function askLog(it) {
 
 // 雑学などへ移っても、聞いている間はバーを出したまま。ほかの日のニュースへ移ったら次の準備を始める
 store.on('content', () => { if (P.date && !P.items.length) { const d = P.date; P.date = null; reset(d); } });
-
-/* ---------- Claude と話して聞く ----------
-   Claude アプリ(音声モード)で話し相手になってもらう。記事は関数の GET から素の文字で読んでもらう。
-   開いた先で文が入らないこともあるので、頼む文はコピーもしておく(貼り付ければ同じ) */
-export function claudePrompt(date, n) {
-  const url = FN + '?d=' + date + (n ? '&n=' + n : '');
-  const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
-  return 'あさよみの' + md + 'の' + (n ? 'ニュース(' + n + '本目)' : 'ニュース') + 'です。まず ' + url + ' を開いて全部読んでください。\n' +
-    '私は通勤・通学中に、音声モードで歩きながら聞いています。' +
-    (n ? 'この記事を1分くらいで話して、' : '1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに') +
-    '「質問ある？それとも次へ？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。' +
-    '記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。';
-}
-// 頼む文にニュースの本文もつけた版(URL を読めないときでも、貼るだけで話せる)
-function claudeFull(date, n) {
-  const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
-  const items = store.itemsOf('news', date).filter((it) => !n || it.n === n).sort((x, y) => x.n - y.n);
-  const body = items.map((it) => {
-    const d = it.data;
-    const out = ['■ ' + it.n + '本目 [' + (d.catn || (CATS[d.cat] || {}).label || '') + '] ' + stripMarkup(d.title)];
-    if (d.lede) out.push(stripMarkup(d.lede));
-    for (const s of d.secs || d.sections || []) {
-      if (Array.isArray(s)) out.push('【' + stripMarkup(s[0]) + '】' + stripMarkup(s[1]));
-      else if (s) out.push('【' + stripMarkup(s.h) + '】' + (Array.isArray(s.p) ? s.p : [s.p]).map(stripMarkup).join(''));
-    }
-    if (d.life) out.push('【' + (d.lifeLabel || '暮らしに効く') + '】' + stripMarkup(d.life));
-    for (const t of d.terms || []) if (Array.isArray(t) && t[0]) out.push('用語「' + stripMarkup(t[0]) + '」: ' + stripMarkup(t[1]));
-    return out.join('\n');
-  }).join('\n\n');
-  return 'あさよみの' + md + 'の' + (n ? 'ニュース(' + n + '本目)' : 'ニュース') + 'です。下の記事を読んでください。\n' +
-    '私は通勤・通学中に、音声モードで歩きながら聞いています。' +
-    (n ? 'この記事を1分くらいで話して、' : '1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに') +
-    '「質問ある？それとも次へ？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。' +
-    '記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。\n\n' + body;
-}
-async function copyText(text) {
-  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 下のやり方で */ }
-  try {
-    const t = h('textarea', { style: { position: 'fixed', top: '-1000px', opacity: '0' } });
-    t.value = text; document.body.append(t); t.select();
-    const ok = document.execCommand('copy'); t.remove(); return ok;
-  } catch (e) { return false; }
-}
-export function openClaude(date, n) {
-  if (P.audio && !P.audio.paused) P.audio.pause();
-  const full = claudeFull(date, n);
-  copyText(full); // 押したその場でコピーしておく
-  openSheet((sheet) => {
-    const again = h('button', { class: 'pbtn sub', type: 'button' }, 'もう一度コピーする');
-    again.addEventListener('click', async () => { toast((await copyText(full)) ? 'コピーしました' : 'コピーできませんでした'); });
-    sheet.append(
-      h('h3', null, 'Claudeと話して聞く'),
-      h('p', { class: 'sd' }, (n ? 'この記事' : 'その日のニュース' + store.itemsOf('news', date).length + '本') + 'と頼む文を、まとめてコピーしました。'),
-      h('ol', { class: 'csteps' },
-        h('li', null, h('b', null, 'Claudeアプリ'), 'を開いて、新しいチャットに', h('b', null, '貼り付けて送る')),
-        h('li', null, '右下の', h('b', null, '音声モード'), 'にする'),
-        h('li', null, '「次」「それってなに？」のように話しかける')),
-      h('a', { class: 'pbtn', href: 'https://claude.ai/new?q=' + encodeURIComponent(claudePrompt(date, n)), target: '_blank', rel: 'noopener' }, 'Claudeを開く(文が入った状態で)'),
-      h('div', { class: 'qa-b', style: { marginTop: '8px' } }, again),
-      h('p', { class: 'sd sm' }, '「Claudeを開く」はブラウザで開くことがあります。そのときは、Claudeアプリを開いて貼り付けるほうが確実です。'));
-  });
-}
-export function claudeButton(date, n) {
-  return h('button', { class: 'lbtn cl', type: 'button', onclick: () => openClaude(date, n) }, icon('talk', 16), n ? 'Claudeと話す' : 'Claudeと話して聞く');
-}
 
 /* ---------- 設定画面の「ニュースの読み上げ」 ---------- */
 export async function voiceStatus() {
