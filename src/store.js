@@ -469,6 +469,17 @@ export function markRead(it) {
   return true;
 }
 export function readCount(kind, date) { return itemsOf(kind, date).filter(isRead).length; }
+// 見逃した雑学: アプリで届いた分(取り込んだ昔の分は除く)のうち、まだ開いていないもの。新しい日から。
+export function missedTrivia() {
+  const last = latest('trivia');
+  const out = [];
+  for (const d of dates('trivia')) {
+    if (d === last) continue;
+    for (const it of itemsOf('trivia', d)) if (!it.data.legacy && !isRead(it) && !st.has(rid('skip', it))) out.push(it);
+  }
+  return out;
+}
+export function skipMissed(it) { st.set(rid('skip', it), { at: new Date().toISOString() }); }
 export function isSaved(it) { return st.has(rid('save', it)); }
 export function toggleSave(it) {
   const id = rid('save', it);

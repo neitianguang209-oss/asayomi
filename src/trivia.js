@@ -1,10 +1,10 @@
 // 今日の雑学: 一覧(大カード／2枚並び)と記事。見た目は元の「今朝の雑学カード」をそのまま引き継ぐ。
-import { h, clear, rich, jDate, dparts, DOW } from './util.js';
+import { h, clear, rich, jDate, mdDate, dparts, DOW, todayJST } from './util.js';
 import { GENRES } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
-import { dayNotice, reviewNudge, dayNav, readMark, xButton } from './ui.js';
+import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast } from './ui.js';
 import { actionBar } from './actions.js';
 import { openCalendar } from './me.js';
 
@@ -64,6 +64,8 @@ export function renderTrivia(root, date) {
     const g = it.data.genre || 'word';
     if (!tabs.some((t) => t.key === g)) tabs.push({ key: g, label: genreLabel(it, true), color: colorOf(it) });
   }
+  const missed = isLatest ? store.missedTrivia() : [];
+  if (missed.length) tabs.push({ key: 'missed', label: '見逃した ' + missed.length });
   if (store.dates('trivia').length > 1) tabs.push({ key: 'past', label: 'これまでの雑学' });
   if (!tabs.some((t) => t.key === view.tab)) view.tab = 'all';
 
@@ -82,6 +84,7 @@ export function renderTrivia(root, date) {
     for (const b of tabsEl.children) b.setAttribute('aria-pressed', String(b.getAttribute('data-k') === view.tab));
     clear(feed);
     if (view.tab === 'past') { fillPast(feed, date); return; }
+    if (view.tab === 'missed') { fillMissed(feed, missed); return; }
     const list = items.filter((it) => view.tab === 'all' || (it.data.genre || 'word') === view.tab);
     let k = 0;
     let big = true;
@@ -90,6 +93,7 @@ export function renderTrivia(root, date) {
       else { feed.append(pairCard(list[k], list[k + 1])); k += 2; }
       big = !big;
     }
+    if (view.tab === 'all' && missed.length) feed.append(missedBox(missed));
     if (view.tab === 'all' && day.pick && day.pick.text) {
       feed.append(h('div', { class: 'pick' },
         h('span', { class: 'eyebrow' }, '今日のひとこと'),
@@ -111,6 +115,51 @@ function pairCard(a, b) {
     h('div', { class: 'thumb' }, illust(it, { thumb: true })),
     h('h3', null, it.data.title), meta(it, { marks: true }));
   return h('div', { class: 'pair' }, cell(a), cell(b));
+}
+
+// 見逃した雑学: 今日の5本の下に、まだ開いていない前の日の雑学を3本だけもう一度出す。
+// 並びは日ごとに変わり、同じ日のうちは変わらない(読んだら抜けて次が入る)。
+const MISSED_SHOW = 3;
+function seeded(it, seed) {
+  let x = 2166136261;
+  for (const c of seed + it.date + it.n) x = Math.imul(x ^ c.charCodeAt(0), 16777619);
+  x = Math.imul(x ^ (x >>> 16), 2246822507);
+  x = Math.imul(x ^ (x >>> 13), 3266489909);
+  return (x ^ (x >>> 16)) >>> 0;
+}
+function missedRow(it) {
+  return h('div', { class: 'mrow' },
+    h('button', { class: 'rowb', type: 'button', onclick: () => open(it) },
+      h('span', { class: 'lab', style: { '--c': colorOf(it) } }, h('i'), genreLabel(it, true)),
+      h('span', { class: 'rt' }, h('b', null, it.data.title), h('small', null, mdDate(it.date) + 'の雑学' + (it.data.gist ? '　' + it.data.gist : '')))),
+    h('button', { class: 'skip', type: 'button', 'aria-label': 'もう出さない', title: 'もう出さない',
+      onclick: () => { store.skipMissed(it); toast('「' + it.data.title + '」はもう出しません'); } }, '×'));
+}
+function showTab(key) {
+  const b = document.querySelector('.tv .tabs [data-k="' + key + '"]');
+  if (b) { b.click(); window.scrollTo(0, 0); }
+}
+function missedBox(missed) {
+  const today = todayJST();
+  const picks = missed.slice().sort((a, b) => seeded(a, today) - seeded(b, today)).slice(0, MISSED_SHOW);
+  const box = h('div', { class: 'day missed' },
+    h('h3', null, '見逃した雑学をもう一度',
+      missed.length > picks.length ? h('button', { type: 'button', onclick: () => showTab('missed') }, 'ぜんぶで' + missed.length + '本 ›') : null));
+  for (const it of picks) box.append(missedRow(it));
+  return box;
+}
+function fillMissed(feed, missed) {
+  feed.append(h('p', { class: 'mnote' }, 'まだ開いていない雑学です。開くと「読んだ」になってここから消えます。興味のないものは × で外せます。'));
+  let cur = null;
+  let box = null;
+  for (const it of missed) {
+    if (it.date !== cur) {
+      cur = it.date;
+      box = h('div', { class: 'day' }, h('h3', null, jDate(it.date)));
+      feed.append(box);
+    }
+    box.append(missedRow(it));
+  }
 }
 
 // これまでの雑学: 日付ごとの箱。10日分ずつ出す。

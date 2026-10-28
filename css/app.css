@@ -110,6 +110,14 @@ strong{font-weight:900}
 .tv .rowb b{font-size:15px;line-height:1.5}
 .tv .rowb small{font-size:13px;color:var(--sub);line-height:1.6}
 .tv .rowb.read b{color:#7d828a}
+.tv .mrow{display:flex;align-items:flex-start;border-top:1px solid var(--line)}
+.tv .mrow:first-of-type{border-top:0}
+.tv .mrow .rowb{border-top:0;flex:1;min-width:0}
+.tv .mrow small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tv .mrow .skip{flex:none;width:36px;height:40px;margin-top:4px;border:0;background:none;color:#a0a4aa;font-size:18px;cursor:pointer;border-radius:10px}
+.tv .mrow .skip:hover{background:var(--bg)}
+.tv .missed{border:1.5px dashed color-mix(in srgb,var(--ink) 18%,transparent)}
+.tv .mnote{margin:0;font-size:13.5px;color:var(--sub);line-height:1.7}
 .tv .morebtn,.nw .morebtn{display:block;width:100%;border:1px solid var(--line);background:#fff;border-radius:999px;padding:12px;font-size:14px;font-weight:700;cursor:pointer}
 .tv .pastlinks{display:flex;gap:8px;flex-wrap:wrap}
 .tv .pastlinks button{border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 14px;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
