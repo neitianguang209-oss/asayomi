@@ -40,6 +40,19 @@
   if ('serviceWorker' in navigator && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) {
     window.addEventListener('load', function () {
       navigator.serviceWorker.register('sw.js').catch(function () {});
+      // 新しい版が入ったら、その場で1回だけ読み込み直す(古い画面が出続けないように)。聞いている最中は待つ
+      var had = !!navigator.serviceWorker.controller, done = false;
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        if (!had || done) return;
+        done = true;
+        var go = function () {
+          var a = document.querySelectorAll('audio'), busy = false;
+          for (var i = 0; i < a.length; i++) if (!a[i].paused) busy = true;
+          if (window.__asayomiPlaying && window.__asayomiPlaying()) busy = true;
+          if (busy) setTimeout(go, 30000); else location.reload();
+        };
+        go();
+      });
     });
   }
 </script>

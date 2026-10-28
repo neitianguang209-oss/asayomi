@@ -1,5 +1,5 @@
 // 接続先と決めごと。ここにあるキーは公開用(読むだけ＋決まった関数だけ呼べる)。
-export const VERSION = '1.3.1';
+export const VERSION = '1.3.2';
 export const SB_URL = 'https://gzayrjlhruhvklsidraw.supabase.co';
 export const SB_KEY = 'sb_publishable_-sNQxpwsU7JxhPF9S2vn5A_-CCTqQZL';
 

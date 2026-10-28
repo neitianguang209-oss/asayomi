@@ -160,26 +160,69 @@ async function tryModels(models: string[], call: (m: string) => Promise<Response
   }
   return last;
 }
-function audioOf(data: any): string | null {
-  const steps = data?.steps ?? [];
-  let found: string | null = null;
-  for (const s of steps) for (const c of s?.content ?? []) if (c?.type === 'audio' && c.data) found = c.data;
-  if (found) return found;
-  // generateContent の形で返ってきた場合
-  for (const c of data?.candidates ?? []) for (const p of c?.content?.parts ?? []) if (p?.inlineData?.data) return p.inlineData.data;
-  return null;
+// 返ってきた JSON のどこかにある音声(base64)を探す。interactions は steps[].content[]、generateContent は candidates[].content.parts[].inlineData
+function audioOf(data: any): { data: string; mime: string } | null {
+  let found: { data: string; mime: string } | null = null;
+  const walk = (o: any, depth: number) => {
+    if (!o || typeof o !== 'object' || depth > 8) return;
+    if (Array.isArray(o)) { for (const x of o) walk(x, depth + 1); return; }
+    const mime = String(o.mime_type ?? o.mimeType ?? '');
+    if (typeof o.data === 'string' && o.data.length > 1000 && (o.type === 'audio' || /^audio\//.test(mime))) found = { data: o.data, mime };
+    for (const k of Object.keys(o)) if (k !== 'data') walk(o[k], depth + 1);
+  };
+  walk(data, 0);
+  return found;
 }
-async function synth(key: string, models: string[], text: string): Promise<Res> {
-  return tryModels(models, (model) => fetch(API + 'interactions', {
+// 失敗の中身を残しておく(あとで原因を調べるため。キーは含めない)
+async function logErr(where: string, msg: string) {
+  console.error('[asayomi-voice]', where, msg);
+  await setSecret('last_error', JSON.stringify({ at: new Date().toISOString(), where, msg: msg.slice(0, 800) })).catch(() => {});
+}
+type Synth = { ok: true; pcm: string; rate: number; model: string } | { ok: false; code: 'key' | 'quota' | 'ai'; msg: string };
+// 新しい呼び方(interactions)で作り、だめなら前からの呼び方(generateContent)でもう一度。モデルも順に試す
+async function synth(key: string, models: string[], text: string): Promise<Synth> {
+  const style = '落ち着いて聞き取りやすい、ニュースの読み上げ';
+  const viaI = (model: string) => fetch(API + 'interactions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       model,
-      input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style: '落ち着いて聞き取りやすい、ニュースの読み上げ' }] }] }],
+      input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
       response_format: { type: 'audio', mime_type: 'audio/l16', sample_rate: RATE },
       generation_config: { speech_config: [{ voice: VOICE }] },
     }),
-  }));
+  });
+  const viaG = (model: string) => fetch(API + 'models/' + model + ':generateContent', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } } },
+    }),
+  });
+  let last: Synth = { ok: false, code: 'ai', msg: 'no model' };
+  for (const model of models.slice(0, 3)) {
+    for (const [via, call] of [['interactions', viaI], ['generateContent', viaG]] as const) {
+      const res = await call(model).catch((e) => { last = { ok: false, code: 'ai', msg: via + ' ' + model + ' network ' + e }; return null; });
+      if (!res) continue;
+      const txt = await res.text().catch(() => '');
+      if (res.ok) {
+        let data: any = null;
+        try { data = JSON.parse(txt); } catch { /* 下で扱う */ }
+        const au = audioOf(data);
+        // 音の形は mime の rate= で分かればそれに従う(WAV のときは端末側で頭の部分を読む)
+        if (au) return { ok: true, pcm: au.data, rate: Number((/rate=(\d+)/i.exec(au.mime) || [])[1]) || RATE, model: model + '/' + via };
+        last = { ok: false, code: 'ai', msg: via + ' ' + model + ' no audio: ' + txt.slice(0, 400) };
+        await logErr('tts', last.msg);
+        continue;
+      }
+      if (res.status === 401 || res.status === 403 || /API key not valid|API_KEY_INVALID/i.test(txt)) return { ok: false, code: 'key', msg: txt.slice(0, 300) };
+      last = { ok: false, code: res.status === 429 ? 'quota' : 'ai', msg: via + ' ' + model + ' ' + res.status + ' ' + txt.slice(0, 400) };
+      await logErr('tts', last.msg);
+      if (res.status === 429) break; // このモデルの枠は終わり。次のモデルへ
+    }
+  }
+  return last;
 }
 
 const ASK_SYSTEM = [
@@ -225,13 +268,15 @@ Deno.serve(async (req) => {
       // その日の音声の一覧(できているもの・作っている最中のもの)
       case 'status': {
         if (!isDate(body.date)) return json({ error: 'bad date' }, 400);
-        const [{ data: rows }, key] = await Promise.all([
+        const [{ data: rows }, key, lastErr] = await Promise.all([
           db.from('asayomi_audio').select('n,path,dur,claimed_at').eq('date', body.date),
           getSecret('gemini_key'),
+          getSecret('last_error'),
         ]);
         const pub = (p: string) => db.storage.from(BUCKET).getPublicUrl(p).data.publicUrl;
         return json({
           ready: !!key,
+          lastError: (() => { try { const e = JSON.parse(lastErr || 'null'); return e ? { at: e.at, where: e.where } : null; } catch { return null; } })(),
           items: (rows ?? []).map((r) => ({
             n: r.n,
             url: r.path ? pub(r.path) : null,
@@ -246,7 +291,7 @@ Deno.serve(async (req) => {
         const key = String(body.key ?? '').trim();
         if (!/^[A-Za-z0-9_.-]{20,120}$/.test(key)) return json({ error: 'キーの形がちがうようです', code: 'key' }, 400);
         const r = await listModels(key);
-        if (!r.ok) return json({ error: 'このキーは使えないようです', code: 'key', status: r.status }, 400);
+        if (!r.ok) { await logErr('set-key', 'status ' + r.status); return json({ error: 'このキーは使えないようです(' + r.status + ')', code: 'key', status: r.status }, 400); }
         await setSecret('gemini_key', key);
         await setSecret('gemini_models', JSON.stringify(r.models));
         return json({ ok: true });
@@ -267,13 +312,13 @@ Deno.serve(async (req) => {
         await db.from('asayomi_audio').upsert({ date, n, claimed_at: new Date().toISOString() });
         const models = await modelsFor(key);
         const r = await synth(key, models.tts, speechOf(d, n));
-        const pcm = r.ok ? audioOf(r.data) : null;
-        if (!r.ok || !pcm) {
+        if (!r.ok) {
           await db.from('asayomi_audio').update({ claimed_at: null }).eq('date', date).eq('n', n).is('path', null);
-          const code = r.ok ? 'ai' : r.code;
-          return json({ error: code === 'quota' ? 'Gemini の無料枠を使い切りました' : code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code, detail: r.ok ? 'no audio' : r.msg }, code === 'quota' ? 429 : 502);
+          return json({ error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code: r.code }, r.code === 'quota' ? 429 : 502);
         }
-        return json({ pcm, rate: RATE, model: r.model });
+        await setSecret('last_ok', JSON.stringify({ at: new Date().toISOString(), where: 'tts', model: r.model }));
+        await db.from('asayomi_secret').delete().eq('k', 'last_error'); // うまくいったので、前のエラーの表示は消す
+        return json({ pcm: r.pcm, rate: r.rate, model: r.model });
       }
 
       // 端末が作った mp3 を置く
@@ -327,18 +372,22 @@ Deno.serve(async (req) => {
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: ASK_SYSTEM }] },
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            generationConfig: { temperature: 0.4, maxOutputTokens: 1024 },
+            generationConfig: { temperature: 0.4, maxOutputTokens: 4096 }, // 考える分も枠に入るので多めに
           }),
         }));
-        if (!r.ok) return json({ error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : '答えを作れませんでした', code: r.code }, r.code === 'quota' ? 429 : 502);
+        if (!r.ok) {
+          await logErr('ask', r.code + ' ' + (r.status ?? '') + ' ' + (r.msg ?? ''));
+          return json({ error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '答えを作れませんでした', code: r.code }, r.code === 'quota' ? 429 : 502);
+        }
         const parts = r.data?.candidates?.[0]?.content?.parts ?? [];
         const a = parts.filter((p: any) => p.text && !p.thought).map((p: any) => p.text).join('').trim();
-        if (!a) return json({ error: '答えを作れませんでした', code: 'ai' }, 502);
+        if (!a) { await logErr('ask', 'empty ' + JSON.stringify(r.data).slice(0, 400)); return json({ error: '答えを作れませんでした', code: 'ai' }, 502); }
         return json({ a, model: r.model });
       }
     }
     return json({ error: 'unknown action' }, 400);
   } catch (e) {
+    await logErr(String(body.action), String((e as Error)?.stack ?? e));
     return json({ error: String((e as Error)?.message ?? e) }, 500);
   }
 });

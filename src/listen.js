@@ -201,8 +201,21 @@ function loadLame() {
 async function toMp3(b64, rate) {
   const lj = await loadLame();
   const bin = atob(b64);
-  const u8 = new Uint8Array(bin.length & ~1);
-  for (let i = 0; i < u8.length; i++) u8[i] = bin.charCodeAt(i);
+  let from = 0;
+  // WAV(頭に RIFF がつく)で返ってきたときは、data の前までを読み飛ばし、速さも頭の情報に合わせる
+  if (bin.slice(0, 4) === 'RIFF' && bin.slice(8, 12) === 'WAVE') {
+    const u32 = (o) => (bin.charCodeAt(o) | (bin.charCodeAt(o + 1) << 8) | (bin.charCodeAt(o + 2) << 16) | (bin.charCodeAt(o + 3) << 24)) >>> 0;
+    let o = 12;
+    while (o + 8 <= bin.length) {
+      const id = bin.slice(o, o + 4);
+      const size = u32(o + 4);
+      if (id === 'fmt ') rate = u32(o + 12) || rate;
+      if (id === 'data') { from = o + 8; break; }
+      o += 8 + size + (size & 1);
+    }
+  }
+  const u8 = new Uint8Array((bin.length - from) & ~1);
+  for (let i = 0; i < u8.length; i++) u8[i] = bin.charCodeAt(from + i);
   const pcm = new Int16Array(u8.buffer);
   const enc = new lj.Mp3Encoder(1, rate, 48);
   const out = [];
@@ -439,7 +452,7 @@ function paintTime(pos) {
 }
 
 /* ---------- キーの登録 ---------- */
-function openSetup(after) {
+export function openSetup(after) {
   openSheet((sheet, close) => {
     let local = '';
     try { local = localStorage.getItem('reading-log-gemini-key') || ''; } catch (e) { /* 読めない */ }
@@ -658,3 +671,13 @@ export function openClaude(date, n) {
 export function claudeButton(date, n) {
   return h('button', { class: 'lbtn cl', type: 'button', onclick: () => openClaude(date, n) }, icon('talk', 16), n ? 'Claudeと話す' : 'Claudeと話して聞く');
 }
+
+/* ---------- 設定画面の「ニュースの読み上げ」 ---------- */
+export async function voiceStatus() {
+  const st = await call('status', { date: store.latest('news') || '2000-01-01' }, 15000);
+  if (st.code) return { ok: false };
+  P.ready = !!st.ready;
+  return { ok: true, ready: !!st.ready, lastError: st.lastError || null, made: (st.items || []).filter((x) => x.url).length };
+}
+// 新しい版への読み込み直し(index.html)を、聞いている間は待ってもらうため
+window.__asayomiPlaying = playingNow;
