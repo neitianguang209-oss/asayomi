@@ -23,6 +23,17 @@ const I = {
   flow: '<circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="12" r="2.2"/><path d="M6 8.200v7.600M8 6.800l8 4M8 17.200l8-4"/>',
   out: '<path d="M14 5h5v5M19 5l-8 8"/><path d="M11 6H6.500A1.500 1.500 0 0 0 5 7.500v10A1.500 1.500 0 0 0 6.500 19h10a1.500 1.500 0 0 0 1.500-1.500V13"/>',
 };
+// 聞く(プレーヤー)用
+Object.assign(I, {
+  ear: '<path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.500" y="14" width="4" height="6" rx="1.500"/><rect x="16.500" y="14" width="4" height="6" rx="1.500"/>',
+  play: '<path d="M8 5.500v13l10.500-6.500z" fill="currentColor"/>',
+  pause: '<path d="M8 5v14M16 5v14" stroke-width="3.200"/>',
+  prev: '<path d="M6 5v14"/><path d="M18.500 5.500v13L9 12z" fill="currentColor"/>',
+  next: '<path d="M18 5v14"/><path d="M5.500 5.500v13L15 12z" fill="currentColor"/>',
+  back10: '<path d="M4.500 12a7.500 7.500 0 1 0 2.200-5.300"/><path d="M4 3.500v4h4"/><text x="12" y="15.400" font-size="7.500" text-anchor="middle" fill="currentColor" stroke="none" font-family="DM Mono,monospace">10</text>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.500 11a6.500 6.500 0 0 0 13 0M12 17.500V21"/>',
+  ask: '<circle cx="12" cy="12" r="8.500"/><path d="M9.600 9.500a2.500 2.500 0 1 1 3.400 2.300c-.7.300-1 .8-1 1.500v.4"/><circle cx="12" cy="16.800" r=".6" fill="currentColor"/>',
+});
 export function icon(name, size) {
   const s = size || 22;
   return h('span', {

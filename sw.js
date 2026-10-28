@@ -1,7 +1,8 @@
 // Service Worker(手書き・ビルド不要)。全パスは相対。GitHub Pages のサブパス配信でも壊れないようにするため。
 // アプリを更新して公開するたび、内容を問わず毎回 v を上げる(上げないと古い画面が出続ける)。
-const CACHE_NAME = 'asayomi-v5';
+const CACHE_NAME = 'asayomi-v6';
 const FONT_CACHE = 'asayomi-fonts';
+const AUDIO_CACHE = 'asayomi-audio'; // ニュースの音声(listen.js が出し入れする)。更新しても消さない
 const APP_SHELL = [
   './',
   './index.html',
@@ -21,6 +22,7 @@ const APP_SHELL = [
   './src/review.js',
   './src/search.js',
   './src/me.js',
+  './src/listen.js',
   './icons/icon-192.png',
   './icons/icon-180.png',
   './icons/favicon-32.png',
@@ -39,7 +41,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== FONT_CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE_NAME && k !== FONT_CACHE && k !== AUDIO_CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
