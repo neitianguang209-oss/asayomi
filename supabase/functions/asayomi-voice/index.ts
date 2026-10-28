@@ -1,5 +1,5 @@
 // あさよみ Edge Function(読み上げと質問)
-// - ニュースの記事を Gemini の読み上げ(TTS)で声にする。返すのは生の音(PCM)で、mp3 にするのは端末側。
+// - ニュース・雑学の記事を Gemini の読み上げ(TTS)で声にする。返すのは生の音(PCM)で、mp3 にするのは端末側。
 //   端末が mp3 を送り返すと公開バケット asayomi-audio に置き、ほかの端末はそれを取りに行くだけ(1本につき1回しか作らない)
 // - 聞いている途中の質問に、記事をふまえて耳で聞いてわかる短さで答える
 // - Gemini のキーはサーバー側(asayomi_secret)だけに置く。無料枠を使い切らないよう1日の回数に上限をつける
@@ -114,15 +114,30 @@ function secsOf(d: any) {
   }
   return out;
 }
-function speechOf(d: any, n: number) {
-  const cat = d.catn || CATS[d.cat] || '';
-  const lines = [n + '本目。' + (cat ? cat + 'のニュースです。' : ''), stop(clean(d.title))];
-  if (d.lede) lines.push(stop(clean(d.lede)));
-  for (const s of secsOf(d)) {
-    if (s.h) lines.push(stop(clean(s.h)));
-    for (const p of s.ps) if (p) lines.push(stop(clean(p)));
+// 1本目には「今日のニュース、8本です」のような入りをつける(ニュース→雑学でも雑学→ニュースでも自然につながるように)
+function speechOf(kind: Kind, d: any, n: number, total: number) {
+  const lines: string[] = [];
+  if (n === 1 && total) lines.push((kind === 'news' ? '今日のニュース' : '今日の雑学') + 'は、' + total + '本です。');
+  if (kind === 'news') {
+    const cat = d.catn || CATS[d.cat] || '';
+    lines.push(n + '本目。' + (cat ? cat + 'のニュースです。' : ''), stop(clean(d.title)));
+    if (d.lede) lines.push(stop(clean(d.lede)));
+    for (const s of secsOf(d)) {
+      if (s.h) lines.push(stop(clean(s.h)));
+      for (const p of s.ps) if (p) lines.push(stop(clean(p)));
+    }
+    if (d.life) lines.push(stop(clean(d.lifeLabel || '暮らしに効くポイント')), stop(clean(d.life)));
+  } else {
+    const g = d.genreLabel || GENRE[d.genre] || '';
+    lines.push('雑学の' + n + '本目。' + (g ? g + 'のお話です。' : ''), stop(clean(d.title)));
+    if (d.gist) lines.push(stop(clean(d.gist)));
+    for (const s of d.sections || []) {
+      if (s.h) lines.push(stop(clean(s.h)));
+      for (const p of Array.isArray(s.p) ? s.p : [s.p]) if (p) lines.push(stop(clean(p)));
+    }
+    if (d.talk) lines.push('会話で使える一言。', stop(clean(d.talk)));
+    if (d.extra?.text) lines.push(stop(clean(d.extra.label || 'ひとこと')), stop(clean(d.extra.text)));
   }
-  if (d.life) lines.push(stop(clean(d.lifeLabel || '暮らしに効くポイント')), stop(clean(d.life)));
   return lines.filter((l) => l && l !== '。').join('\n');
 }
 // 質問に答えるとき用の、見出しつきの本文
@@ -137,9 +152,15 @@ function articleText(d: any) {
   for (const t of d.terms || []) if (Array.isArray(t) && t[0]) out.push('用語「' + clean(t[0]) + '」: ' + clean(t[1]));
   return out.join('\n');
 }
-async function newsItem(date: string, n: number) {
-  const { data } = await db.from('asayomi_items').select('data').eq('kind', 'news').eq('date', date).eq('n', n).maybeSingle();
+type Kind = 'news' | 'trivia';
+const kindOf = (k: unknown): Kind => (k === 'trivia' ? 'trivia' : 'news'); // 前の版の端末は kind を送らない(=ニュース)
+async function itemOf(kind: Kind, date: string, n: number) {
+  const { data } = await db.from('asayomi_items').select('data').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
   return data?.data ?? null;
+}
+async function countOf(kind: Kind, date: string) {
+  const { count } = await db.from('asayomi_items').select('n', { count: 'exact', head: true }).eq('kind', kind).eq('date', date);
+  return count ?? 0;
 }
 
 /* ---------- Gemini ---------- */
@@ -180,8 +201,7 @@ async function logErr(where: string, msg: string) {
 }
 type Synth = { ok: true; pcm: string; rate: number; model: string } | { ok: false; code: 'key' | 'quota' | 'ai'; msg: string };
 // 新しい呼び方(interactions)で作り、だめなら前からの呼び方(generateContent)でもう一度。モデルも順に試す
-async function synth(key: string, models: string[], text: string): Promise<Synth> {
-  const style = '落ち着いて聞き取りやすい、ニュースの読み上げ';
+async function synth(key: string, models: string[], text: string, style: string): Promise<Synth> {
   const viaI = (model: string) => fetch(API + 'interactions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
@@ -226,7 +246,7 @@ async function synth(key: string, models: string[], text: string): Promise<Synth
 }
 
 const ASK_SYSTEM = [
-  'あなたは朝のニュースアプリ「あさよみ」の解説役です。聞き手は通勤・通学で歩きながら、ニュースを音声で聞いている大学生です。',
+  'あなたは朝のアプリ「あさよみ」の解説役です。聞き手は通勤・通学で歩きながら、ニュースや雑学を音声で聞いている大学生です。',
   '記事を聞いていてわからなかったことを質問されるので、その記事をふまえて答えてください。',
   '答えは耳で聞いてすぐわかる日本語の話し言葉で、2〜4文・200字以内。箇条書き・記号・URL・英語の略語の羅列は使わない。',
   '記事に書いていないことは一般的な知識で補ってよいが、最近の出来事で確かでないことは「記事の時点では」などと断る。',
@@ -283,7 +303,7 @@ Deno.serve(async (req) => {
       case 'status': {
         if (!isDate(body.date)) return json({ error: 'bad date' }, 400);
         const [{ data: rows }, key, lastErr] = await Promise.all([
-          db.from('asayomi_audio').select('n,path,dur,claimed_at').eq('date', body.date),
+          db.from('asayomi_audio').select('n,path,dur,claimed_at').eq('kind', kindOf(body.kind)).eq('date', body.date),
           getSecret('gemini_key'),
           getSecret('last_error'),
         ]);
@@ -314,20 +334,22 @@ Deno.serve(async (req) => {
       // 1本ぶんの声を作って、生の音(24kHz・16bit・1ch)を base64 で返す
       case 'tts': {
         const { date, n } = body;
+        const kind = kindOf(body.kind);
         if (!isDate(date) || !isN(n)) return json({ error: 'bad item' }, 400);
-        const { data: row } = await db.from('asayomi_audio').select('path,claimed_at').eq('date', date).eq('n', n).maybeSingle();
+        const { data: row } = await db.from('asayomi_audio').select('path,claimed_at').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
         if (row?.path) return json({ done: true });
         if (row?.claimed_at && Date.now() - Date.parse(row.claimed_at) < 4 * 60e3 && !body.force) return json({ busy: true });
-        const d = await newsItem(date, n);
+        const d = await itemOf(kind, date, n);
         if (!d) return json({ error: 'no item' }, 404);
         const key = await getSecret('gemini_key');
         if (!key) return json({ error: 'キーが未登録です', code: 'nokey' }, 400);
         if (!(await count('tts'))) return json({ error: '今日の読み上げの回数の上限です', code: 'cap' }, 429);
-        await db.from('asayomi_audio').upsert({ date, n, claimed_at: new Date().toISOString() });
+        await db.from('asayomi_audio').upsert({ kind, date, n, claimed_at: new Date().toISOString() });
         const models = await modelsFor(key);
-        const r = await synth(key, models.tts, speechOf(d, n));
+        const r = await synth(key, models.tts, speechOf(kind, d, n, n === 1 ? await countOf(kind, date) : 0),
+          kind === 'news' ? '落ち着いて聞き取りやすい、ニュースの読み上げ' : '友だちに話すような、明るく楽しい語り');
         if (!r.ok) {
-          await db.from('asayomi_audio').update({ claimed_at: null }).eq('date', date).eq('n', n).is('path', null);
+          await db.from('asayomi_audio').update({ claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n).is('path', null);
           return json({ error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code: r.code }, r.code === 'quota' ? 429 : 502);
         }
         await setSecret('last_ok', JSON.stringify({ at: new Date().toISOString(), where: 'tts', model: r.model }));
@@ -338,17 +360,18 @@ Deno.serve(async (req) => {
       // 端末が作った mp3 を置く
       case 'put': {
         const { date, n } = body;
+        const kind = kindOf(body.kind);
         const dur = Number(body.dur);
         if (!isDate(date) || !isN(n) || !(dur > 0 && dur < 1200) || typeof body.mp3 !== 'string') return json({ error: 'bad put' }, 400);
-        const { data: row } = await db.from('asayomi_audio').select('path').eq('date', date).eq('n', n).maybeSingle();
+        const { data: row } = await db.from('asayomi_audio').select('path').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
         if (!row) return json({ error: 'not claimed' }, 409);
         if (row.path) return json({ ok: true, dup: true });
         const bytes = Uint8Array.from(atob(body.mp3), (c) => c.charCodeAt(0));
         if (bytes.length < 1000 || bytes.length > 6 * 1024 * 1024) return json({ error: 'bad size' }, 400);
-        const path = 'news/' + date + '/' + n + '-' + crypto.randomUUID().slice(0, 8) + '.mp3';
+        const path = kind + '/' + date + '/' + n + '-' + crypto.randomUUID().slice(0, 8) + '.mp3';
         const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'audio/mpeg', cacheControl: '31536000' });
         if (up.error) return json({ error: up.error.message }, 500);
-        await db.from('asayomi_audio').update({ path, dur, bytes: bytes.length, model: String(body.model ?? '').slice(0, 60), claimed_at: null }).eq('date', date).eq('n', n);
+        await db.from('asayomi_audio').update({ path, dur, bytes: bytes.length, model: String(body.model ?? '').slice(0, 60), claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n);
         // 古い音声を片づける
         const old = new Date(Date.now() + 9 * 3600e3 - KEEP_DAYS * 864e5).toISOString().slice(0, 10);
         const { data: olds } = await db.from('asayomi_audio').select('date,n,path').lt('date', old).limit(50);
@@ -363,9 +386,10 @@ Deno.serve(async (req) => {
       // 聞いている途中の質問に答える
       case 'ask': {
         const { date, n } = body;
+        const kind = kindOf(body.kind);
         const q = String(body.q ?? '').trim().slice(0, 400);
         if (!isDate(date) || !isN(n) || !q) return json({ error: 'bad ask' }, 400);
-        const d = await newsItem(date, n);
+        const d = await itemOf(kind, date, n);
         if (!d) return json({ error: 'no item' }, 404);
         const key = await getSecret('gemini_key');
         if (!key) return json({ error: 'キーが未登録です', code: 'nokey' }, 400);
@@ -374,7 +398,7 @@ Deno.serve(async (req) => {
         const prev = (Array.isArray(body.history) ? body.history : []).slice(-4)
           .map((x: any) => 'Q: ' + clean(x?.q).slice(0, 200) + '\nA: ' + clean(x?.a).slice(0, 300)).join('\n');
         const prompt = [
-          '記事(' + date + ' 配信):', articleText(d), '',
+          (kind === 'news' ? 'ニュースの記事' : '雑学の記事') + '(' + date + ' 配信):', kind === 'news' ? articleText(d) : triviaText(d), '',
           near ? 'いま聞いていたあたり: ' + near + '\n' : '',
           prev ? 'この記事についてのこれまでのやりとり:\n' + prev + '\n' : '',
           '質問: ' + q,

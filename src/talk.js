@@ -8,7 +8,7 @@ import { stripMarkup } from './util.js';
 import * as store from './store.js';
 import { icon } from './art.js';
 import { openSheet, toast } from './ui.js';
-import { pauseListening } from './listen.js';
+import { pauseListening, listenBoth } from './listen.js';
 
 const FN = SB_URL + '/functions/v1/asayomi-voice';
 const NAME = { news: 'ニュース', trivia: '雑学' };
@@ -99,9 +99,9 @@ async function copyText(text) {
   } catch (e) { return false; }
 }
 
-const BOTH_KEY = 'asayomi:talkBoth';
-function wantBoth() { try { return localStorage.getItem(BOTH_KEY) !== '0'; } catch (e) { return true; } }
-function setBoth(v) { try { localStorage.setItem(BOTH_KEY, v ? '1' : '0'); } catch (e) { /* 覚えなくても使える */ } }
+// 「続けてもう一方も」は、まとめて聞く(listen.js)と同じ設定を使う
+const wantBoth = () => listenBoth(); // listen.js とはお互いに読み込み合うので、呼ぶときに取りに行く
+const setBoth = (v) => store.setPref({ listenBoth: v });
 
 export function openClaude(kind, date, n) {
   pauseListening();

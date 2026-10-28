@@ -106,7 +106,7 @@ export function renderNews(root, date) {
     if (v === 'top') {
       const notice = dayNotice('news', date);
       if (notice) feed.append(notice);
-      feed.append(h('div', { class: 'lgrp' }, listenCard(date), h('div', { class: 'lalt' }, claudeButton('news', date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く(続けて雑学も)'))));
+      feed.append(h('div', { class: 'lgrp' }, listenCard('news', date), h('div', { class: 'lalt' }, claudeButton('news', date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く(続けて雑学も)'))));
       if (isLatest) { const nudge = reviewNudge(); if (nudge) feed.append(nudge); }
       if (day.lead) feed.append(h('div', { class: 'leadline' }, h('b', null, jDate(date) + 'の' + items.length + '選。'), day.lead));
       topLayout(feed, items, lite);

@@ -117,12 +117,12 @@ export function mePage() {
     voiceStatus().then((v) => {
       if (!v.ok) { vSmall.textContent = '通信できませんでした'; return; }
       let t = v.ready ? '登録ずみ(押すと登録し直せます)' : 'まだです。押して登録すると「まとめて聞く」が使えます';
-      if (v.ready) t += '　今日の声 ' + v.made + '/' + store.itemsOf('news', store.latest('news')).length + '本';
+      if (v.ready) t += '　今日の声 ' + v.made + '/' + v.total + '本(ニュース＋雑学)';
       if (v.lastError) t += '　最後のエラー ' + new Date(v.lastError.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '(' + v.lastError.where + ')';
       vSmall.textContent = t;
     });
-    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'ニュースの読み上げ')), h('div', { class: 'me-sec' }, vRow,
-      h('div', { class: 'me-row' }, h('div', { class: 't' }, h('b', null, 'Claudeと話して聞く'), h('small', null, 'キーなしで使えます。ニュースのトップか記事の「Claudeと話して聞く」から、Claudeアプリの音声モードで。')))));
+    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'ニュースと雑学の読み上げ')), h('div', { class: 'me-sec' }, vRow,
+      h('div', { class: 'me-row' }, h('div', { class: 't' }, h('b', null, 'Claudeと話して聞く'), h('small', null, 'キーなしで使えます。ニュース・雑学のトップか記事の「Claudeと話して聞く」から、Claudeアプリの音声モードで。')))));
 
     // データ
     const S = store.S;
