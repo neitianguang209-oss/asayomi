@@ -9,7 +9,7 @@ import { dayNotice, reviewNudge, dayNav, xButton } from './ui.js';
 import { actionBar } from './actions.js';
 import { openTermSheet, attachLookup } from './lookup.js';
 import { openCalendar } from './me.js';
-import { listenCard, listenButton, askLog } from './listen.js';
+import { listenCard, listenButton, askLog, claudeButton } from './listen.js';
 
 const view = { tab: 'top', termQ: '', termSort: 'new', termShown: 60 };
 
@@ -105,7 +105,7 @@ export function renderNews(root, date) {
     if (v === 'top') {
       const notice = dayNotice('news', date);
       if (notice) feed.append(notice);
-      feed.append(listenCard(date));
+      feed.append(h('div', { class: 'lgrp' }, listenCard(date), h('div', { class: 'lalt' }, claudeButton(date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く'))));
       if (isLatest) { const nudge = reviewNudge(); if (nudge) feed.append(nudge); }
       if (day.lead) feed.append(h('div', { class: 'leadline' }, h('b', null, jDate(date) + 'の' + items.length + '選。'), day.lead));
       topLayout(feed, items, lite);
@@ -280,7 +280,7 @@ export function newsArticle(it) {
   const ameta = h('div', { class: 'ameta' }, h('span', null, '配信 ' + p.y + '年' + p.m + '月' + p.d + '日'));
   if (d.src) ameta.append(h('span', null, d.src));
   ameta.append(h('span', { class: 'cat ' + d.cat }, catName(d) + (d.role ? '・' + d.role : '')));
-  ain.append(h('h1', null, d.title), ameta, listenButton(it));
+  ain.append(h('h1', null, d.title), ameta, h('div', { class: 'lrow' }, listenButton(it), claudeButton(it.date, it.n)));
   if (store.svgOf(it)) ain.append(illust(it));
   if (d.lede) ain.append(rich(h('p', { class: 'lede' }), d.lede));
   for (const s of secsOf(d)) {

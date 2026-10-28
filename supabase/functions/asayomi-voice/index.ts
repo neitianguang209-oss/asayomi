@@ -190,9 +190,32 @@ const ASK_SYSTEM = [
   '質問の聞き取りが崩れていても、記事の内容から意図をくみ取って答える。',
 ].join('\n');
 
+// Claude との会話用: その日のニュースを素の文字で返す(GET ?d=日付 [&n=番号])。
+// Claude アプリにこの URL を渡すと、読んでから音声で話し相手になってくれる。中身はアプリで公開している記事と同じ
+async function newsText(url: URL) {
+  let date = url.searchParams.get('d') || '';
+  const n = parseInt(url.searchParams.get('n') || '', 10);
+  if (!isDate(date)) {
+    const { data } = await db.from('asayomi_days').select('date').eq('kind', 'news').order('date', { ascending: false }).limit(1).maybeSingle();
+    date = data?.date ?? todayJST();
+  }
+  let q = db.from('asayomi_items').select('n,data').eq('kind', 'news').eq('date', date).order('n');
+  if (isN(n)) q = q.eq('n', n);
+  const { data: rows } = await q;
+  const head = 'あさよみ ' + date + ' のニュース' + (isN(n) ? '(' + n + '本目)' : '(' + (rows?.length ?? 0) + '本)');
+  const body = (rows ?? []).map((r: any) => {
+    const d = r.data || {};
+    return '■ ' + r.n + '本目 [' + (d.catn || CATS[d.cat] || '') + ']\n' + articleText(d);
+  }).join('\n\n');
+  return new Response(head + '\n\n' + (body || 'この日のニュースは見つかりませんでした。') + '\n', {
+    headers: { ...CORS, 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'public, max-age=300' },
+  });
+}
+
 /* ---------- 入口 ---------- */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS });
+  if (req.method === 'GET') return newsText(new URL(req.url));
   if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
   let body: Record<string, any>;
   try { body = await req.json(); } catch { return json({ error: 'bad json' }, 400); }
@@ -221,7 +244,7 @@ Deno.serve(async (req) => {
       // キーを登録する(使えるか確かめてから)
       case 'set-key': {
         const key = String(body.key ?? '').trim();
-        if (!/^[A-Za-z0-9_-]{30,60}$/.test(key)) return json({ error: 'キーの形がちがうようです', code: 'key' }, 400);
+        if (!/^[A-Za-z0-9_.-]{20,120}$/.test(key)) return json({ error: 'キーの形がちがうようです', code: 'key' }, 400);
         const r = await listModels(key);
         if (!r.ok) return json({ error: 'このキーは使えないようです', code: 'key', status: r.status }, 400);
         await setSecret('gemini_key', key);

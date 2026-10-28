@@ -590,7 +590,8 @@ export function openAsk(opt) {
     paintLog();
     sheet.append(h('h3', null, '質問する'),
       h('p', { class: 'sd' }, '「' + it.data.title + '」について、わからないことを聞けます。'),
-      log, ans, mic, h('div', { class: 'krow' }, ta, sendBtn));
+      log, ans, mic, h('div', { class: 'krow' }, ta, sendBtn),
+      h('p', { class: 'sd sm' }, 'Claudeと声で話しながら聞きたいときは ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClaude(date, n); } }, 'Claudeで開く')));
   }, () => {
     if (rec) { try { rec.abort(); } catch (e) { /* もう止まっている */ } rec = null; }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -634,3 +635,26 @@ export function askLog(it) {
 
 // 雑学などへ移っても、聞いている間はバーを出したまま。ほかの日のニュースへ移ったら次の準備を始める
 store.on('content', () => { if (P.date && !P.items.length) { const d = P.date; P.date = null; reset(d); } });
+
+/* ---------- Claude と話して聞く ----------
+   Claude アプリ(音声モード)で話し相手になってもらう。記事は関数の GET から素の文字で読んでもらう。
+   開いた先で文が入らないこともあるので、頼む文はコピーもしておく(貼り付ければ同じ) */
+export function claudePrompt(date, n) {
+  const url = FN + '?d=' + date + (n ? '&n=' + n : '');
+  const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
+  return 'あさよみの' + md + 'の' + (n ? 'ニュース(' + n + '本目)' : 'ニュース') + 'です。まず ' + url + ' を開いて全部読んでください。\n' +
+    '私は通勤・通学中に、音声モードで歩きながら聞いています。' +
+    (n ? 'この記事を1分くらいで話して、' : '1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに') +
+    '「質問ある？それとも次へ？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。' +
+    '記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。';
+}
+export function openClaude(date, n) {
+  const text = claudePrompt(date, n);
+  try { if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {}); } catch (e) { /* コピーできなくても開く */ }
+  if (P.audio && !P.audio.paused) P.audio.pause();
+  toast('頼む文をコピーしました。入っていなければ貼り付けてください');
+  window.open('https://claude.ai/new?q=' + encodeURIComponent(text), '_blank', 'noopener');
+}
+export function claudeButton(date, n) {
+  return h('button', { class: 'lbtn cl', type: 'button', onclick: () => openClaude(date, n) }, icon('talk', 16), n ? 'Claudeと話す' : 'Claudeと話して聞く');
+}
