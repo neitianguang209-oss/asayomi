@@ -15,6 +15,7 @@ const FN = SB_URL + '/functions/v1/asayomi-voice';
 const SPEEDS = [0.8, 1, 1.25, 1.5, 1.75, 2];
 const AUDIO_CACHE = 'asayomi-audio';
 const LAME = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js';
+const OUT_RATE = 24000;
 
 async function call(action, body, ms) {
   const ctl = new AbortController();
@@ -45,7 +46,7 @@ const P = {
   prep: null, progress: '', error: '', stopped: false,
   make: false,            // 足りない声を作ってよいか(最新の日か、聞くボタンを押した日だけ)
   audio: null, bar: null, shown: false,
-  curN: 0, pending: null, waitAfter: 0, heard: new Set(),
+  curN: 0, pending: null, waitAfter: 0, heard: new Set(), ended: false,
 };
 const speed = () => { const r = Number(store.pref().listenRate); return SPEEDS.indexOf(r) >= 0 ? r : 1; };
 const listeners = new Set();
@@ -66,7 +67,7 @@ function audio() {
     if (pd) { seekTo(pd.n, pd.at); if (pd.play) a.play().catch(() => {}); }
   });
   a.addEventListener('timeupdate', tick);
-  a.addEventListener('play', () => { paint(); setPosition(); });
+  a.addEventListener('play', () => { P.ended = false; paint(); setPosition(); });
   a.addEventListener('pause', () => { paint(); setPosition(); });
   a.addEventListener('ratechange', setPosition);
   a.addEventListener('ended', () => {
@@ -74,6 +75,7 @@ function audio() {
     const last = P.segs[P.segs.length - 1];
     // まだ作っている途中の記事があれば、できた所で続きを流す
     if (last && P.prep && last.n !== P.items[P.items.length - 1].n) P.waitAfter = last.n;
+    else P.ended = true;
     paint();
   });
   P.audio = a;
@@ -216,7 +218,18 @@ async function toMp3(b64, rate) {
   }
   const u8 = new Uint8Array((bin.length - from) & ~1);
   for (let i = 0; i < u8.length; i++) u8[i] = bin.charCodeAt(from + i);
-  const pcm = new Int16Array(u8.buffer);
+  let pcm = new Int16Array(u8.buffer);
+  // つないで1本にするので、どの記事も同じ 24kHz にそろえる(速さのちがう mp3 が混ざると途中で壊れる)
+  if (rate !== OUT_RATE) {
+    const k = rate / OUT_RATE;
+    const out = new Int16Array(Math.floor(pcm.length / k));
+    for (let i = 0; i < out.length; i++) {
+      const x = i * k, j = Math.floor(x), f = x - j;
+      out[i] = (pcm[j] * (1 - f) + (pcm[Math.min(j + 1, pcm.length - 1)] * f)) | 0;
+    }
+    pcm = out;
+    rate = OUT_RATE;
+  }
   const enc = new lj.Mp3Encoder(1, rate, 48);
   const out = [];
   const B = 1152 * 16;
@@ -271,7 +284,7 @@ function reset(date) {
   P.items = store.itemsOf('news', date).slice().sort((x, y) => x.n - y.n);
   P.parts = new Map();
   P.segs = []; P.total = 0; P.sig = ''; P.scale = 1;
-  P.error = ''; P.progress = ''; P.stopped = false; P.waitAfter = 0; P.pending = null; P.make = false;
+  P.error = ''; P.progress = ''; P.stopped = false; P.waitAfter = 0; P.pending = null; P.make = false; P.ended = false;
   P.curN = P.items.length ? P.items[0].n : 0;
 }
 
@@ -281,8 +294,17 @@ export function prepare(date, make) {
     if (P.audio && !P.audio.paused) return Promise.resolve(); // 別の日を流している間は切り替えない
     reset(date);
   }
-  if (make && !P.make) { P.make = true; P.stopped = false; }
-  if (!P.prep) P.prep = runPrepare(date).finally(() => { P.prep = null; changed(); });
+  if (make && !P.make) {
+    P.make = true; P.stopped = false;
+    if (P.prep) P.again = true; // 作らない約束で動いている途中: 終わったらもう一度、今度は作る
+  }
+  if (!P.prep) {
+    P.prep = runPrepare(date).finally(() => {
+      P.prep = null;
+      if (P.again) { P.again = false; prepare(P.date, true); }
+      changed();
+    });
+  }
   return P.prep;
 }
 async function runPrepare(date) {
@@ -307,7 +329,7 @@ async function runPrepare(date) {
       if (P.date !== date) return;
       const x = byN.get(it.n);
       if (x && (x.url || x.busy)) { waiting = true; continue; } // ほかの端末が作っている
-      P.progress = '声を作っています ' + (P.parts.size + 1) + '/' + P.items.length;
+      P.progress = '声を作っています ' + (P.parts.size + 1) + '/' + P.items.length + '(アプリは開いたままで)';
       changed();
       const r = await call('tts', { date, n: it.n }, 150000);
       if (r.done || r.busy) { waiting = true; continue; }
@@ -443,6 +465,7 @@ function paintTime(pos) {
   if (!P.bar) return;
   let sub = '';
   if (P.pending && P.pending.wait) sub = P.error || P.progress || '声を用意しています…';
+  else if (P.ended) sub = P.segs.length < P.items.length ? '声ができている' + P.segs.length + '本を聞き終えました' + (P.error ? '(' + P.error + ')' : '') : P.items.length + '本ぜんぶ聞きました。▶でもう一度';
   else if (pos) sub = fmt(pos.at) + ' / ' + fmt(pos.dur) + (P.progress ? '　' + P.progress : P.error ? '　' + P.error : '');
   else sub = P.error || P.progress;
   el.sub.textContent = sub;
@@ -508,6 +531,12 @@ function nearText(it, frac) {
   }
   return ps[ps.length - 1] || '';
 }
+// iPhone は、押した直後に一度しゃべらせておかないと、あとから読み上げられない。押したその場で呼ぶ
+function primeSpeech() {
+  const ss = window.speechSynthesis;
+  if (!ss || primeSpeech.done) return;
+  try { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; ss.speak(u); primeSpeech.done = true; } catch (e) { /* 読み上げなしでも答えは出る */ }
+}
 function speak(text, onend) {
   const ss = window.speechSynthesis;
   if (!ss) { if (onend) onend(); return; }
@@ -549,7 +578,6 @@ export function openAsk(opt) {
     const ask = async () => {
       const q = ta.value.trim();
       if (!q) return;
-      resume = false;
       sendBtn.disabled = true; mic.disabled = true;
       ans.hidden = false; clear(ans).append(h('p', { class: 'sd' }, '考えています…'));
       const history = asksOf(date, n).slice(-4).map((x) => ({ q: x.q, a: x.a }));
@@ -574,12 +602,13 @@ export function openAsk(opt) {
       mic.addEventListener('click', mark, { once: true });
       speak(r.a, () => { if (!touched && document.body.contains(sheet) && wasPlaying) { resume = true; close(); } });
     };
-    sendBtn.addEventListener('click', ask);
-    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); } });
+    sendBtn.addEventListener('click', () => { primeSpeech(); ask(); });
+    ta.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); primeSpeech(); ask(); } });
     if (SR) {
       mic.addEventListener('click', () => {
         if (rec) { rec.stop(); return; }
         window.speechSynthesis && window.speechSynthesis.cancel();
+        primeSpeech();
         rec = new SR();
         rec.lang = 'ja-JP';
         rec.interimResults = true;
@@ -661,12 +690,54 @@ export function claudePrompt(date, n) {
     '「質問ある？それとも次へ？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。' +
     '記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。';
 }
+// 頼む文にニュースの本文もつけた版(URL を読めないときでも、貼るだけで話せる)
+function claudeFull(date, n) {
+  const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
+  const items = store.itemsOf('news', date).filter((it) => !n || it.n === n).sort((x, y) => x.n - y.n);
+  const body = items.map((it) => {
+    const d = it.data;
+    const out = ['■ ' + it.n + '本目 [' + (d.catn || (CATS[d.cat] || {}).label || '') + '] ' + stripMarkup(d.title)];
+    if (d.lede) out.push(stripMarkup(d.lede));
+    for (const s of d.secs || d.sections || []) {
+      if (Array.isArray(s)) out.push('【' + stripMarkup(s[0]) + '】' + stripMarkup(s[1]));
+      else if (s) out.push('【' + stripMarkup(s.h) + '】' + (Array.isArray(s.p) ? s.p : [s.p]).map(stripMarkup).join(''));
+    }
+    if (d.life) out.push('【' + (d.lifeLabel || '暮らしに効く') + '】' + stripMarkup(d.life));
+    for (const t of d.terms || []) if (Array.isArray(t) && t[0]) out.push('用語「' + stripMarkup(t[0]) + '」: ' + stripMarkup(t[1]));
+    return out.join('\n');
+  }).join('\n\n');
+  return 'あさよみの' + md + 'の' + (n ? 'ニュース(' + n + '本目)' : 'ニュース') + 'です。下の記事を読んでください。\n' +
+    '私は通勤・通学中に、音声モードで歩きながら聞いています。' +
+    (n ? 'この記事を1分くらいで話して、' : '1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに') +
+    '「質問ある？それとも次へ？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。' +
+    '記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。\n\n' + body;
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) { /* 下のやり方で */ }
+  try {
+    const t = h('textarea', { style: { position: 'fixed', top: '-1000px', opacity: '0' } });
+    t.value = text; document.body.append(t); t.select();
+    const ok = document.execCommand('copy'); t.remove(); return ok;
+  } catch (e) { return false; }
+}
 export function openClaude(date, n) {
-  const text = claudePrompt(date, n);
-  try { if (navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {}); } catch (e) { /* コピーできなくても開く */ }
   if (P.audio && !P.audio.paused) P.audio.pause();
-  toast('頼む文をコピーしました。入っていなければ貼り付けてください');
-  window.open('https://claude.ai/new?q=' + encodeURIComponent(text), '_blank', 'noopener');
+  const full = claudeFull(date, n);
+  copyText(full); // 押したその場でコピーしておく
+  openSheet((sheet) => {
+    const again = h('button', { class: 'pbtn sub', type: 'button' }, 'もう一度コピーする');
+    again.addEventListener('click', async () => { toast((await copyText(full)) ? 'コピーしました' : 'コピーできませんでした'); });
+    sheet.append(
+      h('h3', null, 'Claudeと話して聞く'),
+      h('p', { class: 'sd' }, (n ? 'この記事' : 'その日のニュース' + store.itemsOf('news', date).length + '本') + 'と頼む文を、まとめてコピーしました。'),
+      h('ol', { class: 'csteps' },
+        h('li', null, h('b', null, 'Claudeアプリ'), 'を開いて、新しいチャットに', h('b', null, '貼り付けて送る')),
+        h('li', null, '右下の', h('b', null, '音声モード'), 'にする'),
+        h('li', null, '「次」「それってなに？」のように話しかける')),
+      h('a', { class: 'pbtn', href: 'https://claude.ai/new?q=' + encodeURIComponent(claudePrompt(date, n)), target: '_blank', rel: 'noopener' }, 'Claudeを開く(文が入った状態で)'),
+      h('div', { class: 'qa-b', style: { marginTop: '8px' } }, again),
+      h('p', { class: 'sd sm' }, '「Claudeを開く」はブラウザで開くことがあります。そのときは、Claudeアプリを開いて貼り付けるほうが確実です。'));
+  });
 }
 export function claudeButton(date, n) {
   return h('button', { class: 'lbtn cl', type: 'button', onclick: () => openClaude(date, n) }, icon('talk', 16), n ? 'Claudeと話す' : 'Claudeと話して聞く');
