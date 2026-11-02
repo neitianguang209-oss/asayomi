@@ -115,7 +115,7 @@ export function openClaude(kind, date, n) {
     const what = h('p', { class: 'sd' });
     const open = h('a', { class: 'pbtn', target: '_blank', rel: 'noopener' }, 'Claudeを開く(文が入った状態で)');
     const paint = () => {
-      what.textContent = (n ? 'この' + NAME[kind] : parts.map((p) => NAME[p.kind] + p.items.length + '本').join(' → ')) + 'と頼む文を、まとめてコピーしました。';
+      what.textContent = (n ? 'この' + NAME[kind] + 'の記事' : '記事(' + parts.map((p) => NAME[p.kind] + p.items.length + '本').join(' → ') + ')') + 'と、Claudeへの頼み方をまとめてコピーしました。';
       open.href = 'https://claude.ai/new?q=' + encodeURIComponent(shortText(parts, n));
     };
     sheet.append(h('h3', null, 'Claudeと話して聞く'));

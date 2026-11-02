@@ -1,6 +1,8 @@
 // あさよみ Edge Function(読み上げと質問)
-// - ニュース・雑学の記事を Gemini の読み上げ(TTS)で声にする。返すのは生の音(PCM)で、mp3 にするのは端末側。
-//   端末が mp3 を送り返すと公開バケット asayomi-audio に置き、ほかの端末はそれを取りに行くだけ(1本につき1回しか作らない)
+// - ニュース・雑学の記事を Gemini の読み上げ(TTS)で声にする。Gemini から mp3 で受け取り、そのまま公開バケット asayomi-audio に置く。
+//   端末はそれを取りに行くだけ(1本につき1回しか作らない)。mp3 で受け取れないときだけ生の音(PCM)を返し、端末が mp3 にして送り返す
+// - 毎朝の配信のあと、定期実行(pg_cron → action 'pregen')がその日の分を先に作っておく。開いて押したらすぐ流れるように
+// - 読み上げる文では数字を漢数字に直す(算用数字のままだと「6万3290円」を言い違えることがある)
 // - 聞いている途中の質問に、記事をふまえて耳で聞いてわかる短さで答える
 // - Gemini のキーはサーバー側(asayomi_secret)だけに置く。無料枠を使い切らないよう1日の回数に上限をつける
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -19,7 +21,7 @@ const API = 'https://generativelanguage.googleapis.com/v1beta/';
 const BUCKET = 'asayomi-audio';
 const RATE = 24000;
 const VOICE = 'Kore';
-const KEEP_DAYS = 21;                       // 音声はこの日数だけ残す
+const KEEP_DAYS = 8;                        // 音声はこの日数だけ残す(1本 1.5MB ほど。共用の保存枠を食いすぎないよう短めに)
 const CAP = { tts: 40, ask: 80 } as const;  // 1日の回数上限
 const TTS_FALLBACK = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview'];
 const TEXT_FALLBACK = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite'];
@@ -106,6 +108,40 @@ function clean(s: unknown) {
     .trim();
 }
 const stop = (s: string) => (/[。！？!?」』）)]$/.test(s) ? s : s + '。');
+
+// 読み上げ用に数字を漢数字へ(6万3290円 → 六万三千二百九十円、51.5% → 五十一点五%、7:30 → 七時三十分)。
+// 英字にくっついた数字(G7・5G・COP30)はそのまま。画面に出す文は変えない
+const KD = '〇一二三四五六七八九';
+function kanjiInt(s: string): string {
+  s = s.replace(/^0+(?=\d)/, '');
+  if (s === '0') return '〇';
+  if (s.length > 16) return s.split('').map((c) => KD[+c]).join('');
+  const units = ['', '万', '億', '兆'];
+  let out = '';
+  for (let g = 0; s.length > 0; g++) {
+    const four = s.slice(-4).padStart(4, '0');
+    s = s.slice(0, -4);
+    let w = '';
+    ['千', '百', '十', ''].forEach((u, i) => {
+      const d = +four[i];
+      if (!d) return;
+      w += (d === 1 && u ? '' : KD[d]) + u;
+    });
+    if (w) out = w + units[g] + out;
+  }
+  return out;
+}
+// 記号は声にすると不自然なので言いかえる(＝ → 「、」、→ → 「から」、※ は読まない)
+function speakable(s: string) {
+  return speakNums(s.replace(/\s*[＝=]\s*/g, '、').replace(/\s*[→⇒]\s*/g, 'から').replace(/※/g, ''));
+}
+function speakNums(s: string) {
+  return s
+    .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0))
+    .replace(/(\d),(?=\d{3}(?!\d))/g, '$1')
+    .replace(/(?<![\d:])(\d{1,2}):(\d{2})(?![\d:])/g, (_, h, m) => h + '時' + (m === '00' ? '' : m + '分'))
+    .replace(/(?<![A-Za-z\d.])(\d+)(?:\.(\d+))?(?![A-Za-z\d])/g, (_, i, f) => kanjiInt(i) + (f ? '点' + f.split('').map((c: string) => KD[+c]).join('') : ''));
+}
 function secsOf(d: any) {
   const out: { h: string; ps: string[] }[] = [];
   for (const s of d.secs || d.sections || []) {
@@ -114,10 +150,12 @@ function secsOf(d: any) {
   }
   return out;
 }
-// 1本目には「今日のニュース、8本です」のような入りをつける(ニュース→雑学でも雑学→ニュースでも自然につながるように)
-function speechOf(kind: Kind, d: any, n: number, total: number) {
+// 1本目には「11月2日のニュースは、8本です」のような入りをつける(ニュース→雑学でも雑学→ニュースでも自然につながるように。
+// 「今日の」にしないのは、次の日以降に聞いても合うように)
+function speechOf(kind: Kind, date: string, d: any, n: number, total: number) {
   const lines: string[] = [];
-  if (n === 1 && total) lines.push((kind === 'news' ? '今日のニュース' : '今日の雑学') + 'は、' + total + '本です。');
+  const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
+  if (n === 1 && total) lines.push(md + 'の' + (kind === 'news' ? 'ニュース' : '雑学') + 'は、' + total + '本です。');
   if (kind === 'news') {
     const cat = d.catn || CATS[d.cat] || '';
     lines.push(n + '本目。' + (cat ? cat + 'のニュースです。' : ''), stop(clean(d.title)));
@@ -138,7 +176,7 @@ function speechOf(kind: Kind, d: any, n: number, total: number) {
     if (d.talk) lines.push('会話で使える一言。', stop(clean(d.talk)));
     if (d.extra?.text) lines.push(stop(clean(d.extra.label || 'ひとこと')), stop(clean(d.extra.text)));
   }
-  return lines.filter((l) => l && l !== '。').join('\n');
+  return speakable(lines.filter((l) => l && l !== '。').join('\n'));
 }
 // 質問に答えるとき用の、見出しつきの本文
 function articleText(d: any) {
@@ -199,16 +237,17 @@ async function logErr(where: string, msg: string) {
   console.error('[asayomi-voice]', where, msg);
   await setSecret('last_error', JSON.stringify({ at: new Date().toISOString(), where, msg: msg.slice(0, 800) })).catch(() => {});
 }
-type Synth = { ok: true; pcm: string; rate: number; model: string } | { ok: false; code: 'key' | 'quota' | 'ai'; msg: string };
-// 新しい呼び方(interactions)で作り、だめなら前からの呼び方(generateContent)でもう一度。モデルも順に試す
-async function synth(key: string, models: string[], text: string, style: string): Promise<Synth> {
-  const viaI = (model: string) => fetch(API + 'interactions', {
+type Synth = { ok: true; b64: string; mp3: boolean; rate: number; model: string } | { ok: false; code: 'key' | 'quota' | 'ai'; msg: string };
+// 新しい呼び方(interactions)で mp3 をもらう。だめなら生の音で、それもだめなら前からの呼び方(generateContent)で。モデルも順に試す
+async function synth(key: string, models: string[], text: string, style: string, mp3Only = false): Promise<Synth> {
+  const plain = new Set<string>(); // 話し方の指定(annotations)を受け付けないモデル(2.5 系)
+  const viaI = (mime: string) => (model: string) => fetch(API + 'interactions', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
     body: JSON.stringify({
       model,
-      input: [{ type: 'user_input', content: [{ type: 'text', text, annotations: [{ type: 'speech_metadata', style }] }] }],
-      response_format: { type: 'audio', mime_type: 'audio/l16', sample_rate: RATE },
+      input: [{ type: 'user_input', content: [{ type: 'text', text, ...(plain.has(model) ? {} : { annotations: [{ type: 'speech_metadata', style }] }) }] }],
+      response_format: { type: 'audio', mime_type: mime, ...(mime === 'audio/l16' ? { sample_rate: RATE } : {}) },
       generation_config: { speech_config: [{ voice: VOICE }] },
     }),
   });
@@ -221,17 +260,25 @@ async function synth(key: string, models: string[], text: string, style: string)
     }),
   });
   let last: Synth = { ok: false, code: 'ai', msg: 'no model' };
-  for (const model of models.slice(0, 3)) {
-    for (const [via, call] of [['interactions', viaI], ['generateContent', viaG]] as const) {
-      const res = await call(model).catch((e) => { last = { ok: false, code: 'ai', msg: via + ' ' + model + ' network ' + e }; return null; });
+  const ways = [['mp3', viaI('audio/mp3')], ['interactions', viaI('audio/l16')], ['generateContent', viaG]] as const;
+  let sawQuota = false; // どこかで無料枠切れ(429)があれば、最後が別の失敗でも「枠切れ」として返す
+  for (const model of models.slice(0, 5)) {
+    for (const [via, call] of mp3Only ? ways.slice(0, 1) : ways) {
+      let res = await call(model).catch((e) => { last = { ok: false, code: 'ai', msg: via + ' ' + model + ' network ' + e }; return null; });
       if (!res) continue;
-      const txt = await res.text().catch(() => '');
+      let txt = await res.text().catch(() => '');
+      if (res.status === 400 && /annotations are not supported/i.test(txt) && !plain.has(model)) {
+        plain.add(model); // 話し方の指定なしでもう一度
+        res = await call(model).catch(() => null);
+        if (!res) continue;
+        txt = await res.text().catch(() => '');
+      }
       if (res.ok) {
         let data: any = null;
         try { data = JSON.parse(txt); } catch { /* 下で扱う */ }
         const au = audioOf(data);
         // 音の形は mime の rate= で分かればそれに従う(WAV のときは端末側で頭の部分を読む)
-        if (au) return { ok: true, pcm: au.data, rate: Number((/rate=(\d+)/i.exec(au.mime) || [])[1]) || RATE, model: model + '/' + via };
+        if (au) return { ok: true, b64: au.data, mp3: /mp3|mpeg/i.test(au.mime), rate: Number((/rate=(\d+)/i.exec(au.mime) || [])[1]) || RATE, model: model + '/' + via };
         last = { ok: false, code: 'ai', msg: via + ' ' + model + ' no audio: ' + txt.slice(0, 400) };
         await logErr('tts', last.msg);
         continue;
@@ -239,10 +286,92 @@ async function synth(key: string, models: string[], text: string, style: string)
       if (res.status === 401 || res.status === 403 || /API key not valid|API_KEY_INVALID/i.test(txt)) return { ok: false, code: 'key', msg: txt.slice(0, 300) };
       last = { ok: false, code: res.status === 429 ? 'quota' : 'ai', msg: via + ' ' + model + ' ' + res.status + ' ' + txt.slice(0, 400) };
       await logErr('tts', last.msg);
-      if (res.status === 429) break; // このモデルの枠は終わり。次のモデルへ
+      if (res.status === 429) { sawQuota = true; break; } // このモデルの枠は終わり。次のモデルへ
     }
   }
-  return last;
+  return sawQuota ? { ok: false, code: 'quota', msg: (last as { msg?: string }).msg ?? '' } : last; // うまくいったときは途中で返している
+}
+
+/* ---------- mp3 ---------- */
+// 頭の ID3(Gemini は出どころの証明 c2pa を入れてくる)を外す。記事ごとの mp3 を1本につないで流すので、途中に挟まらないように
+function stripId3(b: Uint8Array) {
+  if (b.length > 10 && b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) {
+    const size = ((b[6] & 0x7f) << 21) | ((b[7] & 0x7f) << 14) | ((b[8] & 0x7f) << 7) | (b[9] & 0x7f);
+    return b.subarray(10 + size + (b[5] & 0x10 ? 10 : 0));
+  }
+  return b;
+}
+// フレームを数えて長さ(秒)を出す。あわせて、いつもの形(44.1kHz・1ch)かも見る
+const BR1 = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+const BR2 = [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160];
+function mp3Info(b: Uint8Array) {
+  let o = 0, sec = 0, frames = 0, rate = 0, mono = true;
+  while (o + 4 <= b.length) {
+    if (b[o] !== 0xff || (b[o + 1] & 0xe0) !== 0xe0) { o++; continue; }
+    const ver = (b[o + 1] >> 3) & 3; // 3=MPEG1 2=MPEG2 0=MPEG2.5
+    const layer = (b[o + 1] >> 1) & 3; // 1=Layer III
+    const bi = b[o + 2] >> 4, si = (b[o + 2] >> 2) & 3, pad = (b[o + 2] >> 1) & 1;
+    if (ver === 1 || layer !== 1 || bi === 0 || bi === 15 || si === 3) { o++; continue; }
+    const sr = [44100, 48000, 32000][si] / (ver === 3 ? 1 : ver === 2 ? 2 : 4);
+    const kbps = (ver === 3 ? BR1 : BR2)[bi];
+    const spf = ver === 3 ? 1152 : 576;
+    const len = Math.floor((spf / 8) * kbps * 1000 / sr) + pad;
+    if (len < 24) { o++; continue; }
+    rate = sr; mono = mono && (b[o + 3] >> 6) === 3;
+    sec += spf / sr; frames++; o += len;
+  }
+  return { dur: Math.round(sec * 100) / 100, frames, rate, mono };
+}
+// 置いて、表に載せる(古い音声もついでに片づける)
+async function store(kind: Kind, date: string, n: number, bytes: Uint8Array, dur: number, model: string) {
+  const path = kind + '/' + date + '/' + n + '-' + crypto.randomUUID().slice(0, 8) + '.mp3';
+  const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'audio/mpeg', cacheControl: '31536000' });
+  if (up.error) throw new Error('upload ' + up.error.message);
+  await db.from('asayomi_audio').update({ path, dur, bytes: bytes.length, model: model.slice(0, 60), claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n);
+  const old = new Date(Date.now() + 9 * 3600e3 - KEEP_DAYS * 864e5).toISOString().slice(0, 10);
+  const { data: olds } = await db.from('asayomi_audio').select('date,n,path').lt('date', old).limit(100);
+  if (olds?.length) {
+    const paths = olds.map((o) => o.path).filter(Boolean) as string[];
+    if (paths.length) await db.storage.from(BUCKET).remove(paths);
+    await db.from('asayomi_audio').delete().lt('date', old);
+  }
+  return db.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り' };
+type Made = { url: string; dur: number } | { pcm: string; rate: number; model: string } | { busy: true } | { error: string; code: string; status: number };
+// 1本ぶんを作る。mp3 でもらえたらその場で置いて URL を返す。生の音しかもらえなければそれを返す(端末が mp3 にする)
+async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boolean; mp3Only?: boolean } = {}): Promise<Made> {
+  const { data: row } = await db.from('asayomi_audio').select('path,dur,claimed_at').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
+  if (row?.path) return { url: db.storage.from(BUCKET).getPublicUrl(row.path).data.publicUrl, dur: row.dur };
+  if (row?.claimed_at && Date.now() - Date.parse(row.claimed_at) < 4 * 60e3 && !opt.force) return { busy: true };
+  const d = await itemOf(kind, date, n);
+  if (!d) return { error: 'no item', code: 'none', status: 404 };
+  const key = await getSecret('gemini_key');
+  if (!key) return { error: 'キーが未登録です', code: 'nokey', status: 400 };
+  if (!(await count('tts'))) return { error: '今日の読み上げの回数の上限です', code: 'cap', status: 429 };
+  await db.from('asayomi_audio').upsert({ kind, date, n, claimed_at: new Date().toISOString() });
+  const release = () => db.from('asayomi_audio').update({ claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n).is('path', null);
+  const models = await modelsFor(key);
+  const r = await synth(key, models.tts, speechOf(kind, date, d, n, n === 1 ? await countOf(kind, date) : 0), STYLE[kind], opt.mp3Only);
+  if (!r.ok) {
+    await release();
+    return { error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code: r.code, status: r.code === 'quota' ? 429 : 502 };
+  }
+  await setSecret('last_ok', JSON.stringify({ at: new Date().toISOString(), where: 'tts', model: r.model }));
+  await db.from('asayomi_secret').delete().eq('k', 'last_error'); // うまくいったので、前のエラーの表示は消す
+  if (!r.mp3) {
+    if (opt.mp3Only) { await release(); return { error: 'mp3 で受け取れませんでした', code: 'ai', status: 502 }; }
+    return { pcm: r.b64, rate: r.rate, model: r.model };
+  }
+  const bytes = stripId3(Uint8Array.from(atob(r.b64), (c) => c.charCodeAt(0)));
+  const info = mp3Info(bytes);
+  // つないで流すので、どの記事も同じ形(44.1kHz・1ch)でないと途中で壊れる。ちがう形のものは置かない
+  if (!info.frames || info.rate !== 44100 || !info.mono) {
+    await release();
+    await logErr('tts', 'unexpected mp3 ' + JSON.stringify(info));
+    return { error: '声を作れませんでした', code: 'ai', status: 502 };
+  }
+  return { url: await store(kind, date, n, bytes, info.dur, r.model), dur: info.dur };
 }
 
 const ASK_SYSTEM = [
@@ -331,56 +460,66 @@ Deno.serve(async (req) => {
         return json({ ok: true });
       }
 
-      // 1本ぶんの声を作って、生の音(24kHz・16bit・1ch)を base64 で返す
+      // 1本ぶんの声を作る。{ url, dur }(置けた) / { pcm, rate }(端末で mp3 にして put してほしい) / { busy }(ほかで作っている)
+      case 'make': {
+        const { date, n } = body;
+        if (!isDate(date) || !isN(n)) return json({ error: 'bad item' }, 400);
+        const r = await makeOne(kindOf(body.kind), date, n, { force: !!body.force });
+        return 'status' in r ? json({ error: r.error, code: r.code }, r.status) : json(r);
+      }
+      // 前の版の端末用。こちらで作って置き、端末には「できた」とだけ返す(端末は一覧を取り直して流す)
       case 'tts': {
         const { date, n } = body;
-        const kind = kindOf(body.kind);
         if (!isDate(date) || !isN(n)) return json({ error: 'bad item' }, 400);
-        const { data: row } = await db.from('asayomi_audio').select('path,claimed_at').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
-        if (row?.path) return json({ done: true });
-        if (row?.claimed_at && Date.now() - Date.parse(row.claimed_at) < 4 * 60e3 && !body.force) return json({ busy: true });
-        const d = await itemOf(kind, date, n);
-        if (!d) return json({ error: 'no item' }, 404);
-        const key = await getSecret('gemini_key');
-        if (!key) return json({ error: 'キーが未登録です', code: 'nokey' }, 400);
-        if (!(await count('tts'))) return json({ error: '今日の読み上げの回数の上限です', code: 'cap' }, 429);
-        await db.from('asayomi_audio').upsert({ kind, date, n, claimed_at: new Date().toISOString() });
-        const models = await modelsFor(key);
-        const r = await synth(key, models.tts, speechOf(kind, d, n, n === 1 ? await countOf(kind, date) : 0),
-          kind === 'news' ? '落ち着いて聞き取りやすい、ニュースの読み上げ' : '友だちに話すような、明るく楽しい語り');
-        if (!r.ok) {
-          await db.from('asayomi_audio').update({ claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n).is('path', null);
-          return json({ error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code: r.code }, r.code === 'quota' ? 429 : 502);
-        }
-        await setSecret('last_ok', JSON.stringify({ at: new Date().toISOString(), where: 'tts', model: r.model }));
-        await db.from('asayomi_secret').delete().eq('k', 'last_error'); // うまくいったので、前のエラーの表示は消す
-        return json({ pcm: r.pcm, rate: r.rate, model: r.model });
+        const r = await makeOne(kindOf(body.kind), date, n, { force: !!body.force, mp3Only: true });
+        if ('status' in r) return json({ error: r.error, code: r.code }, r.status);
+        return json('busy' in r ? { busy: true } : { done: true });
       }
 
-      // 端末が作った mp3 を置く
+      // 端末が作った mp3 を置く(Gemini から mp3 でもらえなかったときだけ)
       case 'put': {
         const { date, n } = body;
         const kind = kindOf(body.kind);
-        const dur = Number(body.dur);
-        if (!isDate(date) || !isN(n) || !(dur > 0 && dur < 1200) || typeof body.mp3 !== 'string') return json({ error: 'bad put' }, 400);
+        if (!isDate(date) || !isN(n) || typeof body.mp3 !== 'string') return json({ error: 'bad put' }, 400);
         const { data: row } = await db.from('asayomi_audio').select('path').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
         if (!row) return json({ error: 'not claimed' }, 409);
-        if (row.path) return json({ ok: true, dup: true });
-        const bytes = Uint8Array.from(atob(body.mp3), (c) => c.charCodeAt(0));
+        if (row.path) return json({ ok: true, dup: true, url: db.storage.from(BUCKET).getPublicUrl(row.path).data.publicUrl });
+        const bytes = stripId3(Uint8Array.from(atob(body.mp3), (c) => c.charCodeAt(0)));
         if (bytes.length < 1000 || bytes.length > 6 * 1024 * 1024) return json({ error: 'bad size' }, 400);
-        const path = kind + '/' + date + '/' + n + '-' + crypto.randomUUID().slice(0, 8) + '.mp3';
-        const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'audio/mpeg', cacheControl: '31536000' });
-        if (up.error) return json({ error: up.error.message }, 500);
-        await db.from('asayomi_audio').update({ path, dur, bytes: bytes.length, model: String(body.model ?? '').slice(0, 60), claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n);
-        // 古い音声を片づける
-        const old = new Date(Date.now() + 9 * 3600e3 - KEEP_DAYS * 864e5).toISOString().slice(0, 10);
-        const { data: olds } = await db.from('asayomi_audio').select('date,n,path').lt('date', old).limit(50);
-        if (olds?.length) {
-          const paths = olds.map((o) => o.path).filter(Boolean) as string[];
-          if (paths.length) await db.storage.from(BUCKET).remove(paths);
-          await db.from('asayomi_audio').delete().lt('date', old);
+        const info = mp3Info(bytes);
+        if (!info.frames || info.rate !== 44100 || !info.mono) return json({ error: 'bad mp3' }, 400); // 前の版の 24kHz は混ぜない
+        return json({ ok: true, url: await store(kind, date, n, bytes, info.dur, String(body.model ?? '')), dur: info.dur });
+      }
+
+      // 毎朝の先回り(pg_cron から1分ごと)。いちばん新しい日のニュースと雑学を、1本目どうし→2本目どうし…の順に1本だけ作る
+      case 'pregen': {
+        if (!body.token || body.token !== (await getSecret('cron_token'))) return json({ error: 'no' }, 403);
+        if (!(await getSecret('gemini_key'))) return json({ idle: 'nokey' });
+        const hold = await getSecret('pregen_hold'); // 無料枠が切れたら少し休む
+        if (hold && Date.now() < Number(hold)) return json({ idle: 'hold' });
+        const order: { kind: Kind; date: string; n: number }[] = [];
+        const per: { kind: Kind; date: string; ns: number[] }[] = [];
+        for (const kind of ['news', 'trivia'] as Kind[]) {
+          const { data: day } = await db.from('asayomi_days').select('date').eq('kind', kind).order('date', { ascending: false }).limit(1).maybeSingle();
+          if (!day?.date || day.date < todayJST()) continue; // 今日の分がまだ届いていない
+          const { data: its } = await db.from('asayomi_items').select('n').eq('kind', kind).eq('date', day.date).order('n');
+          per.push({ kind, date: day.date, ns: (its ?? []).map((x: any) => x.n) });
         }
-        return json({ ok: true, url: db.storage.from(BUCKET).getPublicUrl(path).data.publicUrl });
+        for (let i = 0; i < 20; i++) for (const p of per) if (p.ns[i]) order.push({ kind: p.kind, date: p.date, n: p.ns[i] });
+        if (!order.length) return json({ idle: 'none' });
+        const { data: rows } = await db.from('asayomi_audio').select('kind,date,n,path,claimed_at').in('date', [...new Set(order.map((o) => o.date))]);
+        const st = new Map((rows ?? []).map((r: any) => [r.kind + r.date + r.n, r]));
+        const next = order.find((o) => {
+          const r: any = st.get(o.kind + o.date + o.n);
+          return !r?.path && !(r?.claimed_at && Date.now() - Date.parse(r.claimed_at) < 4 * 60e3);
+        });
+        if (!next) return json({ idle: 'done', total: order.length });
+        const r = await makeOne(next.kind, next.date, next.n, { mp3Only: true });
+        if ('status' in r) {
+          if (r.code === 'quota' || r.code === 'ai') await setSecret('pregen_hold', String(Date.now() + (r.code === 'quota' ? 20 : 3) * 60e3));
+          return json({ error: r.error, code: r.code, item: next });
+        }
+        return json({ made: next, left: order.filter((o) => !st.get(o.kind + o.date + o.n)?.path).length - 1 });
       }
 
       // 聞いている途中の質問に答える

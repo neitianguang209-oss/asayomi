@@ -1,6 +1,7 @@
 // 聞く: ニュースと雑学の声の準備・まとめて流すプレーヤー・聞きながらの質問。
-//  - 声は Gemini の読み上げで1本ずつ作る(関数 asayomi-voice)。届いた生の音をこの端末で mp3 にしてクラウドへ置くので、
-//    1本につき作るのは1回だけ。ほかの端末やあとで聞くときは、置いてある mp3 を取ってくるだけ。
+//  - 声は Gemini の読み上げで1本ずつ作る(関数 asayomi-voice)。毎朝の配信のあと、サーバーが先に全部作ってクラウドに置いておくので、
+//    この端末は置いてある mp3 を取ってくるだけ(開いて押したらすぐ流れる)。足りない分だけ、押したときにサーバーに作ってもらう。
+//    Gemini から mp3 でもらえなかったときだけ、届いた生の音をこの端末で mp3 にして置く。
 //  - 「ニュース→雑学」「雑学→ニュース」「片方だけ」を1本の流れ(プレイリスト)にして、
 //    画面を消しても止まらないよう、できている分を1つの音声につなげて <audio> で流す(記事の切れ目でアプリの処理がいらない)。
 //    ロック画面・イヤホンのボタンで 止める/次の記事/前の記事/10秒戻る ができる。
@@ -17,7 +18,8 @@ const FN = SB_URL + '/functions/v1/asayomi-voice';
 const SPEEDS = [0.8, 1, 1.25, 1.5, 1.75, 2];
 const AUDIO_CACHE = 'asayomi-audio';
 const LAME = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js';
-const OUT_RATE = 24000;
+const OUT_RATE = 44100; // サーバーが置く mp3(Gemini の 44.1kHz・1ch・128kbps)と同じ形にそろえる
+const OUT_KBPS = 128;
 const NAME = { news: 'ニュース', trivia: '雑学' };
 const other = (k) => (k === 'news' ? 'trivia' : 'news');
 const keyOf = (kind, date, n) => kind + ':' + date + ':' + n;
@@ -46,9 +48,12 @@ const P = {
   groups: [],             // [{ kind, date }] 流す順
   list: [],               // [{ key, kind, date, n }] 流す順の記事
   parts: new Map(),       // key → { buf, dur }
+  avail: new Set(),       // サーバーに声が置いてある記事
+  durs: new Map(),        // key → 長さ(秒)。まだ取ってきていない記事の分も
   segs: [],               // つないだ音声の中の位置 [{ key, kind, date, n, start, dur }]
   total: 0, scale: 1, built: '', url: null,
   ready: null,            // サーバーにキーがあるか
+  checked: '', checkedAt: 0, // 最後にサーバーへ確かめた流れと時刻
   prep: null, again: false, progress: '', error: '', stopped: false,
   make: false,            // 足りない声を作ってよいか(最新の日か、聞くボタンを押した流れだけ)
   audio: null, bar: null, shown: false,
@@ -241,7 +246,7 @@ async function toMp3(b64, rate) {
   const u8 = new Uint8Array((bin.length - from) & ~1);
   for (let i = 0; i < u8.length; i++) u8[i] = bin.charCodeAt(from + i);
   let pcm = new Int16Array(u8.buffer);
-  // つないで1本にするので、どの記事も同じ 24kHz にそろえる(速さのちがう mp3 が混ざると途中で壊れる)
+  // つないで1本にするので、どの記事もサーバーの mp3 と同じ 44.1kHz にそろえる(形のちがう mp3 が混ざると途中で壊れる)
   if (rate !== OUT_RATE) {
     const k = rate / OUT_RATE;
     const res = new Int16Array(Math.floor(pcm.length / k));
@@ -252,7 +257,7 @@ async function toMp3(b64, rate) {
     pcm = res;
     rate = OUT_RATE;
   }
-  const enc = new lj.Mp3Encoder(1, rate, 48);
+  const enc = new lj.Mp3Encoder(1, rate, OUT_KBPS);
   const out = [];
   const B = 1152 * 16;
   for (let i = 0; i < pcm.length; i += B) {
@@ -279,11 +284,11 @@ async function fetchMp3(url) {
   if (cache) { try { await cache.put(url, res.clone()); } catch (e) { /* 入らなくても流せる */ } }
   return res.arrayBuffer();
 }
-// 2週間より前の音声を端末から片づける
+// 8日より前の音声を端末から片づける(サーバーに置いておく日数と同じ)
 async function sweepCache() {
   try {
     const cache = await caches.open(AUDIO_CACHE);
-    const keep = new Date(Date.now() + 9 * 3600e3 - 14 * 864e5).toISOString().slice(0, 10);
+    const keep = new Date(Date.now() + 9 * 3600e3 - 8 * 864e5).toISOString().slice(0, 10);
     for (const req of await cache.keys()) {
       const m = /\/(?:news|trivia)\/(\d{4}-\d{2}-\d{2})\//.exec(req.url);
       if (m && m[1] < keep) await cache.delete(req);
@@ -292,7 +297,7 @@ async function sweepCache() {
 }
 
 const ERR = {
-  quota: 'Gemini の無料枠を今日は使い切りました。残りは明日作ります',
+  quota: 'Gemini の無料枠がいっぱいです。少し時間をおくと、また作れます',
   cap: '今日の読み上げの回数の上限に達しました',
   key: 'Gemini のキーが使えないようです。登録し直してください',
   nokey: 'Gemini のキーがまだ登録されていません',
@@ -327,8 +332,10 @@ export function prepare(gs, make) {
     P.make = true; P.stopped = false;
     if (P.prep) P.again = true; // 作らない約束で動いている途中: 終わったらもう一度、今度は作る
   }
-  // ぜんぶ声がそろっていれば、聞きに行くまでもない(一覧を描き直すたびに通信しないように)
+  // ぜんぶ声がそろっていれば、聞きに行くまでもない(一覧を描き直すたびに通信しないように)。
+  // 見ているだけのときも、1分以内に確かめたばかりなら聞きに行かない
   if (!P.prep && P.list.length && P.list.every((e) => P.parts.has(e.key))) return Promise.resolve();
+  if (!P.prep && !P.make && P.checked === P.sig && Date.now() - P.checkedAt < 60e3) return Promise.resolve();
   if (!P.prep) {
     const sig = P.sig;
     P.prep = runPrepare(sig).finally(() => {
@@ -342,37 +349,50 @@ export function prepare(gs, make) {
 }
 async function runPrepare(sig) {
   P.error = '';
+  P.checked = sig; P.checkedAt = Date.now();
   const alive = () => P.sig === sig;
-  for (let round = 0; round < 12 && alive(); round++) {
+  for (let round = 0; round < 40 && alive(); round++) { // サーバーが作っている分を待つのは5分ほどまで
     const byKey = new Map();
     for (const g of P.groups) {
       const st = await call('status', { kind: g.kind, date: g.date });
       if (!alive()) return;
       if (st.code) { P.error = ERR[st.code] || st.error || ERR.net; return; }
       P.ready = !!st.ready;
-      for (const x of st.items || []) byKey.set(keyOf(g.kind, g.date, x.n), x);
+      for (const x of st.items || []) { byKey.set(keyOf(g.kind, g.date, x.n), x); if (x.url) { P.avail.add(keyOf(g.kind, g.date, x.n)); P.durs.set(keyOf(g.kind, g.date, x.n), x.dur); } }
     }
-    for (const e of P.list) {
+    changed();
+    // 置いてある声を取ってくる。聞くボタンを押す前(一覧を見ているだけ)は、それぞれの1本目だけ先に取っておく(通信を使いすぎない)
+    const firsts = new Set(P.groups.map((g) => (P.list.find((e) => e.kind === g.kind && e.date === g.date) || {}).key));
+    // 聞きはじめた記事から順に(途中の記事から聞くとき、その前の記事を待たなくていいように)
+    const from = Math.max(0, P.list.findIndex((e) => e.key === ((P.pending && P.pending.key) || P.cur)));
+    const order = P.list.slice(from).concat(P.list.slice(0, from));
+    for (const e of order) {
       const x = byKey.get(e.key);
-      if (x && x.url && !P.parts.has(e.key)) {
+      if (x && x.url && !P.parts.has(e.key) && (P.make || firsts.has(e.key))) {
         try { P.parts.set(e.key, { buf: await fetchMp3(x.url), dur: x.dur }); if (alive()) rebuild(); } catch (err) { /* 次の回で取り直す */ }
       }
       if (!alive()) return;
     }
-    const missing = P.list.filter((e) => !P.parts.has(e.key));
+    const missing = order.filter((e) => !P.parts.has(e.key));
     if (!missing.length) { P.progress = ''; rebuild(); sweepCache(); return; }
     if (!P.ready || P.stopped || !P.make) return;
     let waiting = false;
     for (const e of missing) {
       if (!alive()) return;
       const x = byKey.get(e.key);
-      if (x && (x.url || x.busy)) { waiting = true; continue; } // ほかの端末が作っている
-      const done = P.list.filter((y) => P.parts.has(y.key)).length;
-      P.progress = '声を作っています ' + (done + 1) + '/' + P.list.length + '(アプリは開いたままで)';
+      if (x && (x.url || x.busy)) { waiting = true; continue; } // 取り直しそこねた・サーバーが作っている最中
+      const left = P.list.filter((y) => !P.avail.has(y.key)).length;
+      P.progress = '声を用意しています(あと' + left + '本)';
       changed();
-      const r = await call('tts', { kind: e.kind, date: e.date, n: e.n }, 150000);
-      // 途中で流れが変わっても、できた声は捨てずに置いておく(置かないと、ほかの端末が4分待たされる)
-      if (r.done || r.busy) { if (!alive()) return; waiting = true; continue; }
+      const r = await call('make', { kind: e.kind, date: e.date, n: e.n }, 150000);
+      // サーバーが作って置いた: 取ってきて流れに足す(途中で流れが変わっても、作った声はサーバーに残っている)
+      if (r.url) {
+        P.avail.add(e.key); P.durs.set(e.key, r.dur);
+        try { P.parts.set(e.key, { buf: await fetchMp3(r.url), dur: r.dur }); if (alive()) rebuild(); } catch (err) { waiting = true; }
+        if (!alive()) return;
+        continue;
+      }
+      if (r.busy) { if (!alive()) return; waiting = true; continue; }
       if (!r.pcm) {
         if (!alive()) return;
         P.error = ERR[r.code] || r.error || ERR.ai;
@@ -386,7 +406,10 @@ async function runPrepare(sig) {
         P.parts.set(e.key, { buf: await mp3.blob.arrayBuffer(), dur: mp3.dur });
         if (alive()) rebuild();
         const put = await call('put', { kind: e.kind, date: e.date, n: e.n, dur: mp3.dur, model: r.model, mp3: await b64Of(mp3.blob) }, 60000);
-        if (put.url) { try { const c = await caches.open(AUDIO_CACHE); await c.put(put.url, new Response(mp3.blob, { headers: { 'Content-Type': 'audio/mpeg' } })); } catch (err) { /* 控えなしでも流せる */ } }
+        if (put.url) {
+          P.avail.add(e.key); P.durs.set(e.key, mp3.dur);
+          try { const c = await caches.open(AUDIO_CACHE); await c.put(put.url, new Response(mp3.blob, { headers: { 'Content-Type': 'audio/mpeg' } })); } catch (err) { /* 控えなしでも流せる */ }
+        }
       } catch (err) {
         if (!alive()) return;
         P.error = 'この端末で音声にできませんでした';
@@ -395,9 +418,9 @@ async function runPrepare(sig) {
       }
     }
     if (!waiting) continue;
-    P.progress = 'ほかの端末で作っている声を待っています';
+    P.progress = '声を用意しています(できしだい流します)';
     changed();
-    await new Promise((r) => setTimeout(r, 15000));
+    await new Promise((r) => setTimeout(r, 8000));
   }
 }
 
@@ -510,7 +533,7 @@ function paintTime(pos) {
   if (!P.bar) return;
   let sub = '';
   if (P.pending && P.pending.wait) sub = P.error || P.progress || '声を用意しています…';
-  else if (P.ended) sub = P.segs.length < P.list.length ? '声ができている' + P.segs.length + '本を聞き終えました' + (P.error ? '(' + P.error + ')' : '') : 'ぜんぶ聞きました(' + P.list.length + '本)。▶でもう一度';
+  else if (P.ended) sub = P.segs.length < P.list.length ? '用意できた' + P.segs.length + '本を聞き終えました' + (P.error ? '(' + P.error + ')' : '') : 'ぜんぶ聞きました(' + P.list.length + '本)。▶でもう一度';
   else if (pos) sub = fmt(pos.at) + ' / ' + fmt(pos.dur) + (P.progress ? '　' + P.progress : P.error ? '　' + P.error : '');
   else sub = P.error || P.progress;
   el.sub.textContent = sub;
@@ -532,13 +555,13 @@ export function openSetup(after) {
       b.disabled = false;
       if (!r.ok) { msg.textContent = r.error || ERR.net; return; }
       P.ready = true; P.stopped = false;
-      toast('登録しました。声を作りはじめます');
+      toast('登録しました。声を用意します');
       close();
       if (after) after(); else if (P.groups.length) prepare(P.groups, true);
     };
     sheet.append(
       h('h3', null, '読み上げの準備'),
-      h('p', { class: 'sd' }, 'ニュースと雑学を自然な声にするのと、聞きながらの質問に答えるのに、Google の Gemini(無料枠)を使います。最初に1回だけ、Gemini のキーを登録してください。キーはあさよみのサーバーにだけ置かれ、ほかの端末ではキーなしで使えます。'));
+      h('p', { class: 'sd' }, 'ニュースと雑学の読み上げと、聞きながらの質問への答えには、Google の Gemini(無料枠)を使います。最初に1回だけ、Gemini のキーを登録してください。キーはあさよみのサーバーにだけ置くので、ほかの端末では登録しなくても使えます。毎朝の配信のあとは、サーバーが声を先に作っておきます。'));
     if (local) {
       const b = h('button', { class: 'pbtn', type: 'button' }, '読書記録アプリに登録してあるキーを使う');
       b.addEventListener('click', () => send(local, b));
@@ -724,10 +747,11 @@ export function listenCard(kind, date) {
     chip.hidden = !store.latest(other(kind));
     const mine = P.sig === sigOf(gs);
     const all = gs.reduce((n, g) => n + count(g), 0);
-    const done = mine ? P.list.filter((e) => P.parts.has(e.key)).length : 0;
+    const ready = mine ? P.list.filter((e) => P.avail.has(e.key)) : [];
+    const sec = ready.reduce((n, e) => n + (P.durs.get(e.key) || 0), 0);
     let t = '画面を消しても流れます・倍速もOK';
-    if (mine && done && done < all) t = '声ができた記事 ' + done + '/' + all + (P.progress ? '・作っています' : '');
-    if (mine && done === all && P.total) t = '約' + Math.max(1, Math.round(P.total / 60 / speed())) + '分(' + speed() + '×)・画面を消しても流れます';
+    if (mine && ready.length && ready.length < all) t = P.progress || '声の用意 ' + ready.length + '/' + all + '本(残りは聞きはじめると作ります)';
+    if (mine && ready.length === all && sec) t = '約' + Math.max(1, Math.round(sec / 60 / speed())) + '分(' + speed() + '×)・すぐ流せます・画面を消しても流れます';
     if (mine && P.error && !P.prep) t = P.error;
     if (mine && P.ready === false) t = 'はじめに Gemini のキーを1回だけ登録します';
     sub.textContent = t;
