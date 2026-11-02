@@ -45,6 +45,8 @@ export function icon(name, size) {
 // ジャンルの絵(雑学と同じ手描きの線。64px)
 const K = 'stroke="#2a2a2a" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"';
 const G = {
+  study: '<path d="M32 18C24 12 14 12 8 14v34c6-2 16-2 24 4 8-6 18-6 24-4V14c-6-2-16-2-24 4z" fill="#dbe3f1" ' + K + '/><path d="M32 18v34" ' + K + '/><path d="M46 4l2 4.500 4.500 2-4.500 2-2 4.500-2-4.500-4.500-2 4.500-2z" fill="#3d5a8a"/>',
+  manner: '<rect x="12" y="8" width="40" height="48" rx="3" fill="#fbf3df" ' + K + '/><path d="M12 34h40" stroke="#c8283c" stroke-width="3" stroke-linecap="round"/><path d="M32 34c-6-8-14-6-12 0 2 5 8 3 12 0zM32 34c6-8 14-6 12 0-2 5-8 3-12 0z" fill="none" stroke="#c8283c" stroke-width="2.6" stroke-linejoin="round"/><path d="M32 34l-6 12M32 34l6 12" stroke="#c8283c" stroke-width="2.6" stroke-linecap="round"/><path d="M24 16h16" ' + K + '/>',
   food: '<path d="M14 26h30v9a15 15 0 0 1-30 0z" fill="#fde2c4" ' + K + '/><path d="M44 29h4a6 6 0 0 1 0 12h-5" fill="none" ' + K + '/><path d="M22 10q4 4 0 9M30 8q4 5 0 11M38 10q4 4 0 9" fill="none" ' + K + '/><path d="M10 54h38" ' + K + '/>',
   word: '<path d="M10 12h44v30H31l-11 10V42H10z" fill="#dfe3fb" ' + K + '/><path d="M22 23h20M22 31h13" ' + K + '/>',
   thing: '<path d="M32 8a16 16 0 0 0-9 29v7h18v-7a16 16 0 0 0-9-29z" fill="#d3efec" ' + K + '/><path d="M25 51h14M28 57h8" ' + K + '/><path d="M27 30l5-7 5 7" fill="none" ' + K + '/>',

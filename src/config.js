@@ -1,5 +1,5 @@
 // 接続先と決めごと。ここにあるキーは公開用(読むだけ＋決まった関数だけ呼べる)。
-export const VERSION = '1.6.0';
+export const VERSION = '1.7.0';
 export const SB_URL = 'https://gzayrjlhruhvklsidraw.supabase.co';
 export const SB_KEY = 'sb_publishable_-sNQxpwsU7JxhPF9S2vn5A_-CCTqQZL';
 
@@ -9,6 +9,8 @@ export const APP_URL = 'https://neitianguang209-oss.github.io/asayomi/';
 export const MEMO_TAG = 'b4db2c80-e9d3-46b5-9d4d-62b58c051e4b';
 
 export const GENRES = {
+  study: { label: '学問', color: '#3d5a8a' },
+  manner: { label: 'マナー', color: '#b0812a' },
   food: { label: '食べ物', color: '#e07a1f' },
   word: { label: '言葉', color: '#4757c9' },
   thing: { label: 'モノ', color: '#16877f' },

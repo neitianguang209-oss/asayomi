@@ -147,7 +147,7 @@ function topLayout(feed, items, lite) {
   // イラストの無い以前の配信分など: カテゴリごとに見出しの行で並べる
   for (const [c, list] of [['world', w], ['japan', j], ['ai', a]]) {
     if (!list.length) continue;
-    feed.append(h('div', { class: 'sech' }, h('i', { style: { background: CATS[c].color } }), c === 'ai' ? 'AIパート' : CATS[c].label + 'のニュース'));
+    feed.append(h('div', { class: 'sech' }, h('i', { style: { background: CATS[c].color } }), c === 'ai' ? 'AI・テクノロジー' : CATS[c].label + 'のニュース'));
     if (lite) feed.append(h('div', { class: 'mix' }, list.map((it) => row(it, true))));
     else list.forEach((it) => feed.append(big(it)));
   }

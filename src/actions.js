@@ -43,7 +43,7 @@ export function sendError(e) {
 /* ---------- ToDo(Google ToDo の「To Doリスト」へ) ---------- */
 function openTodoSheet(it, onDone) {
   const d = it.data;
-  const isTry = it.kind === 'news' && d.cat === 'ai' && /技術|トレンド/.test(d.role || '');
+  const isTry = it.kind === 'news' && d.cat === 'ai' && /技術|トレンド|テクノロジー/.test(d.role || '');
   let prefix = isTry ? '試す' : '調べる';
   const subject = d.keyword || String(d.title || '').split(/[\u3000 ]/)[0] || d.title;
   openSheet((sheet, close) => {

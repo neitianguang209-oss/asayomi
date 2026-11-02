@@ -185,7 +185,9 @@ as $$
       from (
         select date,
                '## ' || date::text || E'\n' ||
-               string_agg(n::text || '. ' || coalesce(data->>'title', '') ||
+               string_agg(n::text || '. ' ||
+                          case when coalesce(data->>'role', '') <> '' then '〔' || (data->>'role') || '〕' else '' end ||
+                          coalesce(data->>'title', '') ||
                           case when coalesce(data->>'thread', '') <> '' then ' 〔話題: ' || (data->>'thread') || '〕' else '' end ||
                           case when jsonb_typeof(data->'keywords') = 'array'
                                then ' [keywords: ' || (select string_agg(k, ', ') from jsonb_array_elements_text(data->'keywords') k) || ']'
