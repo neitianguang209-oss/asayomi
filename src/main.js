@@ -7,19 +7,20 @@ import { renderNews, newsArticle, flowPage } from './news.js';
 import { reviewPage } from './review.js';
 import { searchPage, presetSearch } from './search.js';
 import { mePage } from './me.js';
+import { renderManner } from './manner.js';
 import { showLayer, closeLayer, hasLayer, xButton } from './ui.js';
 import { icon } from './art.js';
 
 const viewEl = document.getElementById('view');
 const app = { mode: 'trivia', date: { trivia: null, news: null }, baseKey: '', ver: 0, dirty: false };
-try { if (localStorage.getItem('asayomi:mode') === 'news') app.mode = 'news'; } catch (e) { /* 既定のまま */ }
+try { const m = localStorage.getItem('asayomi:mode'); if (m === 'news' || m === 'manner') app.mode = m; } catch (e) { /* 既定のまま */ }
 
 /* ---------- 上のバー ---------- */
 const bar = { seg: {}, badge: null };
 function buildBar() {
   const el = document.getElementById('bar');
-  const seg = h('div', { class: 'seg', role: 'tablist', 'aria-label': '雑学とニュースの切り替え' });
-  for (const [mode, label] of [['trivia', '雑学'], ['news', 'ニュース']]) {
+  const seg = h('div', { class: 'seg', role: 'tablist', 'aria-label': '雑学・ニュース・マナーの切り替え' });
+  for (const [mode, label] of [['trivia', '雑学'], ['news', 'ニュース'], ['manner', 'マナー']]) {
     const b = h('button', { type: 'button', role: 'tab' }, label);
     b.addEventListener('click', () => {
       if (app.mode === mode) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
@@ -36,6 +37,7 @@ function buildBar() {
     h('button', { class: 'ib', type: 'button', 'aria-label': 'きろく・設定', onclick: () => go('#/me') }, icon('me')))));
 }
 function paintBar() {
+  bar.seg.manner.setAttribute('aria-selected', String(app.mode === 'manner'));
   for (const mode of ['trivia', 'news']) {
     const b = bar.seg[mode];
     b.setAttribute('aria-selected', String(app.mode === mode));
@@ -55,6 +57,16 @@ function paintBar() {
 let baseSeq = 0;
 async function renderBase() {
   const kind = app.mode;
+  if (kind === 'manner') { // マナー帳は日付で分けない
+    const key = 'manner||' + app.ver;
+    if (key === app.baseKey) return;
+    ++baseSeq;
+    app.baseKey = key;
+    app.dirty = false;
+    document.body.classList.remove('m-news');
+    renderManner(viewEl);
+    return;
+  }
   const want = app.date[kind];
   const date = want && store.dayOf(kind, want) ? want : store.latest(kind);
   const key = kind + '|' + date + '|' + app.ver;
@@ -115,6 +127,15 @@ async function route() {
     app.mode = head;
     try { localStorage.setItem('asayomi:mode', head); } catch (e) { /* 覚えられなくても動く */ }
     app.date[head] = isDate(p[1]) ? p[1] : null;
+    closeLayer();
+    await renderBase();
+    paintBar();
+    return;
+  }
+
+  if (head === 'manner') {
+    app.mode = 'manner';
+    try { localStorage.setItem('asayomi:mode', 'manner'); } catch (e) { /* 覚えられなくても動く */ }
     closeLayer();
     await renderBase();
     paintBar();

@@ -30,14 +30,14 @@ strong{font-weight:900}
 .bar{position:sticky;top:0;z-index:30;height:var(--bar-total);padding:var(--sat) 10px 0 14px;background:rgba(255,255,255,.94);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
 .bar-in{max-width:540px;height:100%;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px}
 .seg{display:flex;background:#eceef1;border-radius:999px;padding:3px}
-.seg button{border:0;background:none;padding:6px 0;width:84px;border-radius:999px;font-size:14.5px;font-weight:900;color:#70757d;cursor:pointer;line-height:1.5;transition:background .18s,color .18s}
+.seg button{border:0;background:none;padding:6px 0;width:72px;border-radius:999px;font-size:14.5px;font-weight:900;color:#70757d;cursor:pointer;line-height:1.5;transition:background .18s,color .18s}
 .seg button[aria-selected="true"]{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.16)}
 .seg button i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--red);margin-left:5px;vertical-align:middle;transform:translateY(-1px)}
 .bar-r{display:flex;gap:2px}
 .ib{width:42px;height:42px;border-radius:50%;border:0;background:none;display:grid;place-items:center;cursor:pointer;position:relative;color:var(--ink)}
 .ib:active{background:#eef0f3}
 .ib .badge{position:absolute;top:3px;right:0;min-width:18px;height:18px;border-radius:9px;background:var(--red);color:#fff;font:500 11px/18px var(--f-mono);text-align:center;padding:0 5px;box-shadow:0 0 0 2px #fff}
-@media (max-width:350px){.seg button{width:70px;font-size:13.5px}.ib{width:38px}}
+@media (max-width:400px){.seg button{width:64px;font-size:13.5px}}@media (max-width:350px){.seg button{width:56px;font-size:13px}.ib{width:36px}}
 #view{min-height:calc(100vh - var(--bar-total))}
 .wrap{max-width:560px;margin:0 auto;padding-inline:16px}
 .boot{padding:80px 24px;text-align:center;color:var(--sub);font-size:14px}
@@ -590,3 +590,7 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .cross{display:block;width:100%;text-align:left;margin-top:18px;background:var(--ink);color:#fff;border:0;border-radius:14px;padding:14px 16px;cursor:pointer}
 .cross small{display:block;font-size:12px;font-weight:700;opacity:.75;letter-spacing:.04em}
 .cross b{display:block;margin-top:4px;font-size:15px;line-height:1.5}
+.mn .mlist{background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:4px 16px}
+.mn .rowb .mg{width:40px;height:40px;display:block}
+.mn .rowb .mg svg{width:40px;height:40px}
+.mn .rowb em{font-style:normal;font-size:12px;font-weight:700;color:#9a6c1c}
