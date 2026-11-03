@@ -3,6 +3,7 @@
 //   端末はそれを取りに行くだけ(1本につき1回しか作らない)。mp3 で受け取れないときだけ生の音(PCM)を返し、端末が mp3 にして送り返す
 // - 毎朝の配信のあと、定期実行(pg_cron → action 'pregen')がその日の分を先に作っておく。開いて押したらすぐ流れるように
 // - 読み上げる文では数字を漢数字に直す(算用数字のままだと「6万3290円」を言い違えることがある)
+// - 読み違えやすい言葉(抜擢・人名など)は、記事の「読み方」(yomi)でひらがなに置きかえてから声にする。yomi が無い記事は先に Gemini に読み方を出させて記事に書き足す
 // - 聞いている途中の質問に、記事をふまえて耳で聞いてわかる短さで答える
 // - Gemini のキーはサーバー側(asayomi_secret)だけに置く。無料枠を使い切らないよう1日の回数に上限をつける
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
@@ -165,6 +166,11 @@ function speechOf(kind: Kind, date: string, d: any, n: number, total: number) {
       for (const p of s.ps) if (p) lines.push(stop(clean(p)));
     }
     if (d.life) lines.push(stop(clean(d.lifeLabel || '暮らしに効くポイント')), stop(clean(d.life)));
+    const terms = (d.terms || []).filter((t: any) => Array.isArray(t) && t[0] && t[1]);
+    if (terms.length) {
+      lines.push('この記事の用語。');
+      for (const t of terms) lines.push(stop(clean(t[0])) + stop(clean(t[1])));
+    }
   } else {
     const g = d.genreLabel || GENRE[d.genre] || '';
     lines.push('雑学の' + n + '本目。' + (g ? g + 'のお話です。' : ''), stop(clean(d.title)));
@@ -176,7 +182,24 @@ function speechOf(kind: Kind, date: string, d: any, n: number, total: number) {
     if (d.talk) lines.push('会話で使える一言。', stop(clean(d.talk)));
     if (d.extra?.text) lines.push(stop(clean(d.extra.label || 'ひとこと')), stop(clean(d.extra.text)));
   }
-  return speakable(lines.filter((l) => l && l !== '。').join('\n'));
+  return speakable(withYomi(lines.filter((l) => l && l !== '。').join('\n'), d));
+}
+// 読み方の一覧(yomi と、用語メモの3つ目)。読みはひらがな・カタカナだけのものを使う
+const KANA = /^[ぁ-ゖァ-ヺー・\s]+$/;
+function yomiList(d: any): [string, string][] {
+  const m = new Map<string, string>();
+  const put = (w: unknown, r: unknown) => {
+    const a = String(w ?? '').trim(), b = String(r ?? '').trim();
+    if (a.length >= 2 && b && KANA.test(b) && !KANA.test(a)) m.set(a, b.replace(/\s+/g, ''));
+  };
+  for (const y of Array.isArray(d?.yomi) ? d.yomi : []) if (Array.isArray(y)) put(y[0], y[1]);
+  for (const t of Array.isArray(d?.terms) ? d.terms : []) if (Array.isArray(t)) put(t[0], t[2]);
+  return Array.from(m);
+}
+// 長い語から順に、読みに置きかえる(「人工知能」を先に置きかえてから「知能」)
+function withYomi(s: string, d: any) {
+  for (const [w, r] of yomiList(d).sort((a, b) => b[0].length - a[0].length)) s = s.split(w).join(r);
+  return s;
 }
 // 質問に答えるとき用の、見出しつきの本文
 function articleText(d: any) {
@@ -337,6 +360,39 @@ async function store(kind: Kind, date: string, n: number, bytes: Uint8Array, dur
   }
   return db.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
 }
+// 記事に読み方が無ければ、Gemini に読み違えやすい言葉と正しい読みを出させて記事に書き足す(画面の「読み方」にも出る)。
+// うまくいかなくても声づくりは止めない(読み方なしで読む)
+const YOMI_SYSTEM = [
+  'あなたは日本語の校閲者です。次の記事を音声合成でそのまま読み上げます。',
+  '機械が読み間違えやすい言葉を最大15個選び、この記事の文脈での正しい読みをひらがなで答えてください。',
+  '選ぶもの: 難読語(抜擢・遵守・逼迫など)、専門用語・業界用語、人名・地名・社名・組織名、音読みと訓読みで迷う語、文脈で読みが変わる語(一日・十分・上手など)。',
+  '選ばないもの: 中学生が迷わず読める言葉(英国・先頭・交代・心拍数など)、英字だけの語、数字だけの語、ひらがな・カタカナだけの語。迷う語が無ければ空の配列でよい。',
+  '語は記事に書いてある表記をそのまま(活用させない・前後の字を足さない)。2文字以上。',
+  '答えは JSON の配列だけ: [["抜擢","ばってき"],["一日","ついたち"]]',
+].join('\n');
+async function makeYomi(key: string, models: string[], kind: Kind, date: string, n: number, d: any): Promise<[string, string][]> {
+  try {
+    const text = kind === 'news' ? articleText(d) : triviaText(d);
+    const r = await tryModels(models, (model) => fetch(API + 'models/' + model + ':generateContent', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: YOMI_SYSTEM }] },
+        contents: [{ role: 'user', parts: [{ text }] }],
+        generationConfig: { temperature: 0, maxOutputTokens: 8192, responseMimeType: 'application/json' },
+      }),
+    }));
+    if (!r.ok) { await logErr('yomi', r.code + ' ' + (r.msg ?? '')); return []; }
+    const raw = (r.data?.candidates?.[0]?.content?.parts ?? []).filter((p: any) => p.text && !p.thought).map((p: any) => p.text).join('');
+    const arr = JSON.parse(raw.replace(/^```(?:json)?|```$/g, '').trim());
+    const out = yomiList({ yomi: Array.isArray(arr) ? arr : [] }).filter(([w]) => text.includes(w)).slice(0, 30);
+    await db.rpc('asayomi_set_yomi', { p_kind: kind, p_date: date, p_n: n, p_yomi: out });
+    return out;
+  } catch (e) {
+    await logErr('yomi', String((e as Error)?.message ?? e));
+    return [];
+  }
+}
 const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り' };
 type Made = { url: string; dur: number } | { pcm: string; rate: number; model: string } | { busy: true } | { error: string; code: string; status: number };
 // 1本ぶんを作る。mp3 でもらえたらその場で置いて URL を返す。生の音しかもらえなければそれを返す(端末が mp3 にする)
@@ -352,6 +408,7 @@ async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boole
   await db.from('asayomi_audio').upsert({ kind, date, n, claimed_at: new Date().toISOString() });
   const release = () => db.from('asayomi_audio').update({ claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n).is('path', null);
   const models = await modelsFor(key);
+  if (!Array.isArray(d.yomi)) d.yomi = await makeYomi(key, models.text, kind, date, n, d);
   const r = await synth(key, models.tts, speechOf(kind, date, d, n, n === 1 ? await countOf(kind, date) : 0), STYLE[kind], opt.mp3Only);
   if (!r.ok) {
     await release();
@@ -384,7 +441,7 @@ const ASK_SYSTEM = [
 
 // Claude との会話用: その日の記事を素の文字で返す(GET ?k=news|trivia &d=日付 [&n=番号])。
 // Claude アプリにこの URL を渡すと、読んでから音声で話し相手になってくれる。中身はアプリで公開している記事と同じ
-const GENRE: Record<string, string> = { food: '食べ物', word: '言葉', thing: 'モノ', psych: '心理学', season: '季語', history: '歴史', science: '科学', culture: '文化', sports: 'スポーツ' };
+const GENRE: Record<string, string> = { study: '学問', manner: 'マナー', food: '食べ物', word: '言葉', thing: 'モノ', psych: '心理学', season: '季語', history: '歴史', science: '科学', culture: '文化', sports: 'スポーツ' };
 function triviaText(d: any) {
   const out = ['題: ' + clean(d.title)];
   if (d.gist) out.push('ひとことで: ' + clean(d.gist));

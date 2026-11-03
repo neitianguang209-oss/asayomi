@@ -581,3 +581,12 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .tv .lgrp{margin:0 0 14px}
 .tv .art .lrow{margin:10px 0 4px}
 .tv .art .lrow .lbtn{margin-top:0}
+.nw .term .tt small{font-weight:500;font-size:12px;color:var(--sub);margin-left:8px}
+.yomi{margin-top:14px;border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+.yomi .tl{font-size:13px;font-weight:900;color:var(--ink2);letter-spacing:.06em;display:flex;justify-content:space-between;align-items:baseline}
+.yomi .tl small{font-weight:500;color:var(--sub);letter-spacing:0;font-size:11.5px}
+.yomi .yl{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:8px;font-size:13.5px;color:var(--sub)}
+.yomi .yl b{color:var(--ink);font-weight:700;margin-right:5px;font-size:14.5px}
+.cross{display:block;width:100%;text-align:left;margin-top:18px;background:var(--ink);color:#fff;border:0;border-radius:14px;padding:14px 16px;cursor:pointer}
+.cross small{display:block;font-size:12px;font-weight:700;opacity:.75;letter-spacing:.04em}
+.cross b{display:block;margin-top:4px;font-size:15px;line-height:1.5}

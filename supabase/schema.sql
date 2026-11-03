@@ -390,3 +390,17 @@ grant execute on function public.asayomi_pull(bigint, int) to anon, authenticate
 grant execute on function public.asayomi_day(text, date) to anon, authenticated;
 grant execute on function public.asayomi_state_sync(jsonb, bigint, text) to anon, authenticated;
 grant execute on function public.asayomi_todo_add(text, text) to anon, authenticated;
+
+-- 読み上げの関数(asayomi-voice)が、記事に「読み方」(yomi [[語, よみ]])を書き足す。rev を進めてアプリにも届ける。公開キーからは呼べない
+create or replace function public.asayomi_set_yomi(p_kind text, p_date date, p_n int, p_yomi jsonb)
+returns void
+language sql
+security definer
+set search_path to 'public', 'pg_catalog'
+as $$
+  update public.asayomi_items
+     set data = jsonb_set(data, '{yomi}', p_yomi), rev = nextval('public.asayomi_rev_seq'), updated_at = now()
+   where kind = p_kind and date = p_date and n = p_n and jsonb_typeof(p_yomi) = 'array';
+$$;
+revoke all on function public.asayomi_set_yomi(text, date, int, jsonb) from public, anon, authenticated;
+grant execute on function public.asayomi_set_yomi(text, date, int, jsonb) to service_role;

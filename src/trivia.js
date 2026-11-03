@@ -1,5 +1,5 @@
 // 今日の雑学: 一覧(大カード／2枚並び)と記事。見た目は元の「今朝の雑学カード」をそのまま引き継ぐ。
-import { h, clear, rich, jDate, mdDate, dparts, DOW, todayJST } from './util.js';
+import { h, clear, rich, jDate, mdDate, dparts, DOW, todayJST, yomiBox } from './util.js';
 import { GENRES } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
@@ -216,9 +216,17 @@ export function triviaArticle(it) {
   if (d.extra && d.extra.text) {
     art.append(h('div', { class: 'extra' }, h('span', null, d.extra.label || 'ひとこと'), rich(h('p'), d.extra.text)));
   }
+  const yb = yomiBox(d);
+  if (yb) art.append(yb);
   art.append(askLog(it));
   art.append(actionBar(it));
 
+  // 最後の雑学まで読んだら、同じ日のニュースへそのまま続ける
+  const nw = store.itemsOf('news', it.date);
+  if (items.indexOf(it) === items.length - 1 && nw.length) {
+    art.append(h('button', { class: 'cross', type: 'button', onclick: () => replace('#/news/' + nw[0].date + '/' + nw[0].n) },
+      h('small', null, '雑学はここまで。続けてニュースへ'), h('b', null, nw[0].data.title)));
+  }
   if (items.length > 1) {
     const i = items.indexOf(it);
     const nx = items[(i + 1) % items.length];

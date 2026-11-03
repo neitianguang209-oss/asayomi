@@ -186,3 +186,21 @@ export function shuffle(arr) {
   }
   return a;
 }
+
+// 読み方の一覧(配信の yomi [[語, よみ]] と、用語メモの3つ目)。読み上げと同じ辞書を画面にも出す
+export function yomiOf(d) {
+  const m = new Map();
+  for (const y of Array.isArray(d && d.yomi) ? d.yomi : []) if (Array.isArray(y) && y[0] && y[1]) m.set(String(y[0]), String(y[1]));
+  for (const t of Array.isArray(d && d.terms) ? d.terms : []) if (Array.isArray(t) && t[0] && t[2]) m.set(String(t[0]), String(t[2]));
+  return m;
+}
+// 記事の最後に出す「読み方」の箱(skip にある語は用語メモ側に出しているので除く)
+export function yomiBox(d, skip) {
+  const list = Array.from(yomiOf(d)).filter(([w]) => !(skip && skip.has(w)));
+  if (!list.length) return null;
+  const box = h('div', { class: 'yomi' }, h('div', { class: 'tl' }, '読み方', h('small', null, '読み上げもこの読みです')));
+  const ul = h('div', { class: 'yl' });
+  for (const [w, r] of list) ul.append(h('span', null, h('b', null, w), r));
+  box.append(ul);
+  return box;
+}
