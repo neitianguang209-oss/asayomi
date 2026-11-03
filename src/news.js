@@ -5,7 +5,7 @@ import { CATS } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
-import { dayNotice, reviewNudge, dayNav, xButton } from './ui.js';
+import { dayNotice, reviewNudge, dayNav, xButton, crossButton } from './ui.js';
 import { actionBar } from './actions.js';
 import { openTermSheet, attachLookup } from './lookup.js';
 import { openCalendar } from './me.js';
@@ -328,12 +328,9 @@ export function newsArticle(it) {
   ain.append(askLog(it));
   ain.append(actionBar(it));
 
-  // 最後の記事まで読んだら、同じ日の雑学へそのまま続ける
-  const tv = store.itemsOf('trivia', it.date);
-  if (items.indexOf(it) === items.length - 1 && tv.length) {
-    ain.append(h('button', { class: 'cross', type: 'button', onclick: () => replace('#/trivia/' + tv[0].date + '/' + tv[0].n) },
-      h('small', null, 'ニュースはここまで。続けて雑学へ'), h('b', null, tv[0].data.title)));
-  }
+  // 最後の記事まで読んだら、そのまま雑学へ続ける
+  const cross = crossButton(it);
+  if (cross) ain.append(cross);
   if (items.length > 2) {
     const i = items.indexOf(it);
     const nx = [items[(i + 1) % items.length], items[(i + 2) % items.length]];

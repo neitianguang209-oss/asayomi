@@ -156,7 +156,7 @@ function secsOf(d: any) {
 function speechOf(kind: Kind, date: string, d: any, n: number, total: number) {
   const lines: string[] = [];
   const md = Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
-  if (n === 1 && total) lines.push(md + 'の' + (kind === 'news' ? 'ニュース' : '雑学') + 'は、' + total + '本です。');
+  if (n === 1 && total) lines.push(md + 'の' + KNAME[kind] + 'は、' + total + '本です。');
   if (kind === 'news') {
     const cat = d.catn || CATS[d.cat] || '';
     lines.push(n + '本目。' + (cat ? cat + 'のニュースです。' : ''), stop(clean(d.title)));
@@ -173,7 +173,7 @@ function speechOf(kind: Kind, date: string, d: any, n: number, total: number) {
     }
   } else {
     const g = d.genreLabel || GENRE[d.genre] || '';
-    lines.push('雑学の' + n + '本目。' + (g ? g + 'のお話です。' : ''), stop(clean(d.title)));
+    lines.push(KNAME[kind] + 'の' + n + '本目。' + (g ? g + 'のお話です。' : ''), stop(clean(d.title)));
     if (d.gist) lines.push(stop(clean(d.gist)));
     for (const s of d.sections || []) {
       if (s.h) lines.push(stop(clean(s.h)));
@@ -213,8 +213,9 @@ function articleText(d: any) {
   for (const t of d.terms || []) if (Array.isArray(t) && t[0]) out.push('用語「' + clean(t[0]) + '」: ' + clean(t[1]));
   return out.join('\n');
 }
-type Kind = 'news' | 'trivia';
-const kindOf = (k: unknown): Kind => (k === 'trivia' ? 'trivia' : 'news'); // 前の版の端末は kind を送らない(=ニュース)
+type Kind = 'news' | 'trivia' | 'manner';
+const KNAME: Record<Kind, string> = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
+const kindOf = (k: unknown): Kind => (k === 'trivia' || k === 'manner' ? k : 'news'); // 前の版の端末は kind を送らない(=ニュース)
 async function itemOf(kind: Kind, date: string, n: number) {
   const { data } = await db.from('asayomi_items').select('data').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
   return data?.data ?? null;
@@ -393,7 +394,7 @@ async function makeYomi(key: string, models: string[], kind: Kind, date: string,
     return [];
   }
 }
-const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り' };
+const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り', manner: 'やさしく丁寧に教える、落ち着いた語り' };
 type Made = { url: string; dur: number } | { pcm: string; rate: number; model: string } | { busy: true } | { error: string; code: string; status: number };
 // 1本ぶんを作る。mp3 でもらえたらその場で置いて URL を返す。生の音しかもらえなければそれを返す(端末が mp3 にする)
 async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boolean; mp3Only?: boolean } = {}): Promise<Made> {
@@ -453,8 +454,8 @@ function triviaText(d: any) {
   return out.join('\n');
 }
 async function newsText(url: URL) {
-  const kind = url.searchParams.get('k') === 'trivia' ? 'trivia' : 'news';
-  const name = kind === 'news' ? 'ニュース' : '雑学';
+  const kind = kindOf(url.searchParams.get('k'));
+  const name = KNAME[kind];
   let date = url.searchParams.get('d') || '';
   const n = parseInt(url.searchParams.get('n') || '', 10);
   if (!isDate(date)) {
@@ -556,7 +557,7 @@ Deno.serve(async (req) => {
         if (hold && Date.now() < Number(hold)) return json({ idle: 'hold' });
         const order: { kind: Kind; date: string; n: number }[] = [];
         const per: { kind: Kind; date: string; ns: number[] }[] = [];
-        for (const kind of ['news', 'trivia'] as Kind[]) {
+        for (const kind of ['news', 'trivia', 'manner'] as Kind[]) {
           const { data: day } = await db.from('asayomi_days').select('date').eq('kind', kind).order('date', { ascending: false }).limit(1).maybeSingle();
           if (!day?.date || day.date < todayJST()) continue; // 今日の分がまだ届いていない
           const { data: its } = await db.from('asayomi_items').select('n').eq('kind', kind).eq('date', day.date).order('n');
@@ -594,7 +595,7 @@ Deno.serve(async (req) => {
         const prev = (Array.isArray(body.history) ? body.history : []).slice(-4)
           .map((x: any) => 'Q: ' + clean(x?.q).slice(0, 200) + '\nA: ' + clean(x?.a).slice(0, 300)).join('\n');
         const prompt = [
-          (kind === 'news' ? 'ニュースの記事' : '雑学の記事') + '(' + date + ' 配信):', kind === 'news' ? articleText(d) : triviaText(d), '',
+          KNAME[kind] + 'の記事(' + date + ' 配信):', kind === 'news' ? articleText(d) : triviaText(d), '',
           near ? 'いま聞いていたあたり: ' + near + '\n' : '',
           prev ? 'この記事についてのこれまでのやりとり:\n' + prev + '\n' : '',
           '質問: ' + q,

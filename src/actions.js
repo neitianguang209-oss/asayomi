@@ -31,6 +31,7 @@ function memoOf(it) {
     const line = d.legacy ? d.title : d.gist || d.title;
     return { seed: 'trivia-' + it.date + '-' + (it.n - 1), body: line + '\n\n詳しく：' + linkOf(it) };
   }
+  if (it.kind === 'manner') return { seed: 'manner-' + it.date + '-' + it.n, body: (d.gist || d.title) + '\n\n詳しく：' + linkOf(it) };
   const line = d.gist || (d.title + '\n' + store.briefOf(it));
   return { seed: 'news-' + it.date + '-' + it.n, body: line + '\n\n詳しく：' + linkOf(it) };
 }
@@ -137,7 +138,7 @@ export function actionBar(it) {
   todo.addEventListener('click', () => openTodoSheet(it, paintTodo));
 
   const row = h('div', { class: 'act2' }, save, todo);
-  if (it.kind === 'trivia') {
+  if (it.kind !== 'news') {
     const cid = store.cardIdOf(it);
     const rev = h('button', { class: 'ghost', type: 'button' });
     const paintRev = () => {

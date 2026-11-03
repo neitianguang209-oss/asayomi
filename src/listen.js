@@ -20,8 +20,10 @@ const AUDIO_CACHE = 'asayomi-audio';
 const LAME = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js';
 const OUT_RATE = 44100; // サーバーが置く mp3(Gemini の 44.1kHz・1ch・128kbps)と同じ形にそろえる
 const OUT_KBPS = 128;
-const NAME = { news: 'ニュース', trivia: '雑学' };
-const other = (k) => (k === 'news' ? 'trivia' : 'news');
+const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
+// 流す順はニュース → 雑学 → マナー。途中から聞きはじめたら、その先をつないで最後に頭へ戻る
+const ORDER = ['news', 'trivia', 'manner'];
+const rest = (k) => { const i = ORDER.indexOf(k); return [...ORDER.slice(i + 1), ...ORDER.slice(0, i)]; };
 const keyOf = (kind, date, n) => kind + ':' + date + ':' + n;
 
 async function call(action, body, ms) {
@@ -75,7 +77,7 @@ function dayFor(kind, fromKind, date) {
 }
 function groupsFor(kind, date, both) {
   const gs = [{ kind, date }];
-  if (both) { const k = other(kind); const d = dayFor(k, kind, date); if (d) gs.push({ kind: k, date: d }); }
+  if (both) for (const k of rest(kind)) { const d = dayFor(k, kind, date); if (d) gs.push({ kind: k, date: d }); }
   return gs.filter((g) => store.itemsOf(g.kind, g.date).length);
 }
 const sigOf = (gs) => gs.map((g) => g.kind + '@' + g.date).join('>');
@@ -518,8 +520,8 @@ function paint() {
   const a = P.audio;
   const e = entryOf(P.cur);
   const it = itemOfKey(P.cur);
-  el.num.textContent = e ? (e.kind === 'news' ? 'ニュース ' : '雑学 ') + String(e.n).padStart(2, '0') : '';
-  P.bar.classList.toggle('tv', !!e && e.kind === 'trivia');
+  el.num.textContent = e ? NAME[e.kind] + ' ' + String(e.n).padStart(2, '0') : '';
+  P.bar.classList.toggle('tv', !!e && e.kind !== 'news');
   el.title.textContent = it ? it.data.title : '';
   const loaded = a && a.src.startsWith('blob:');
   const playing = loaded && !a.paused;
@@ -576,7 +578,7 @@ export function openSetup(after) {
 
 /* ---------- 質問 ---------- */
 // ニュースは以前からの ask:n:…、雑学は ask:t:…(既読などと同じ頭文字)
-const askId = (kind, date, n) => 'ask:' + (kind === 'trivia' ? 't' : 'n') + ':' + date + ':' + n + ':';
+const askId = (kind, date, n) => 'ask:' + ({ trivia: 't', manner: 'm' }[kind] || 'n') + ':' + date + ':' + n + ':';
 export function asksOf(kind, date, n) {
   const out = [];
   store.st.each(askId(kind, date, n), (id, d) => { if (d && d.q) out.push(d); });
@@ -586,7 +588,7 @@ export function asksOf(kind, date, n) {
 function nearText(it, frac) {
   const d = it.data;
   const paras = [d.title];
-  if (it.kind === 'trivia') {
+  if (it.kind !== 'news') {
     paras.push(d.gist);
     for (const s of d.sections || []) paras.push(s.h, ...(Array.isArray(s.p) ? s.p : [s.p]));
     paras.push(d.talk, d.extra && d.extra.text);
@@ -743,8 +745,9 @@ export function listenCard(kind, date) {
     label.textContent = gs.map((g) => NAME[g.kind] + count(g) + '本').join(' → ') + 'を聞く';
     const both = listenBoth();
     chip.setAttribute('aria-checked', String(both));
-    chip.textContent = (both ? '✓ ' : '') + '続けて' + NAME[other(kind)] + 'も';
-    chip.hidden = !store.latest(other(kind));
+    const more = rest(kind).filter((k) => store.latest(k));
+    chip.textContent = (both ? '✓ ' : '') + '続けて' + more.map((k) => NAME[k]).join('・') + 'も';
+    chip.hidden = !more.length;
     const mine = P.sig === sigOf(gs);
     const all = gs.reduce((n, g) => n + count(g), 0);
     const ready = mine ? P.list.filter((e) => P.avail.has(e.key)) : [];
@@ -780,7 +783,7 @@ store.on('content', () => {
 
 /* ---------- 設定画面の「ニュースの読み上げ」 ---------- */
 export async function voiceStatus() {
-  const gs = ['news', 'trivia'].map((k) => ({ kind: k, date: store.latest(k) })).filter((g) => g.date);
+  const gs = ORDER.map((k) => ({ kind: k, date: store.latest(k) })).filter((g) => g.date);
   let ready = false, lastError = null, made = 0;
   for (const g of gs) {
     const st = await call('status', g, 15000);

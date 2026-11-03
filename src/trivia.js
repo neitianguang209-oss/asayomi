@@ -4,7 +4,7 @@ import { GENRES } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
-import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast } from './ui.js';
+import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast, crossButton } from './ui.js';
 import { actionBar } from './actions.js';
 import { openCalendar } from './me.js';
 import { claudeButton } from './talk.js';
@@ -192,13 +192,16 @@ function fillPast(feed, curDate) {
 }
 
 /* ---------- 記事 ---------- */
+// マナー(kind: manner)の記事もこの形で出す
 export function triviaArticle(it) {
   const d = it.data;
-  const items = store.itemsOf('trivia', it.date);
-  const isLatest = it.date === store.latest('trivia');
+  const K = it.kind;
+  const name = K === 'manner' ? 'マナー' : '雑学';
+  const items = store.itemsOf(K, it.date);
+  const isLatest = it.date === store.latest(K);
   const art = h('article', { class: 'art' });
 
-  art.append(h('h1', null, d.title), meta(it, { date: true }), h('div', { class: 'lrow' }, listenButton(it), claudeButton('trivia', it.date, it.n)));
+  art.append(h('h1', null, d.title), meta(it, { date: true }), h('div', { class: 'lrow' }, listenButton(it), claudeButton(K, it.date, it.n)));
   if (store.svgOf(it)) art.append(h('div', { class: 'fig' }, illust(it)));
   if (d.gist) {
     art.append(h('div', { class: 'gist' }, h('span', null, d.legacy ? 'この話のメモ' : 'ひとことで言うと'), h('p', null, d.gist)));
@@ -221,24 +224,21 @@ export function triviaArticle(it) {
   art.append(askLog(it));
   art.append(actionBar(it));
 
-  // 最後の雑学まで読んだら、同じ日のニュースへそのまま続ける
-  const nw = store.itemsOf('news', it.date);
-  if (items.indexOf(it) === items.length - 1 && nw.length) {
-    art.append(h('button', { class: 'cross', type: 'button', onclick: () => replace('#/news/' + nw[0].date + '/' + nw[0].n) },
-      h('small', null, '雑学はここまで。続けてニュースへ'), h('b', null, nw[0].data.title)));
-  }
+  // 最後まで読んだら、雑学 → マナー → ニュースの順にそのまま続ける
+  const cross = crossButton(it);
+  if (cross) art.append(cross);
   if (items.length > 1) {
     const i = items.indexOf(it);
     const nx = items[(i + 1) % items.length];
-    art.append(h('button', { class: 'next', type: 'button', onclick: () => replace('#/trivia/' + nx.date + '/' + nx.n) },
+    art.append(h('button', { class: 'next', type: 'button', onclick: () => replace('#/' + K + '/' + nx.date + '/' + nx.n) },
       h('div', { class: 'thumb' }, illust(nx, { thumb: true })),
       h('div', { style: { 'min-width': '0' } },
-        h('small', null, i < items.length - 1 ? '次の雑学' : '最初の雑学にもどる'), h('b', null, nx.data.title))));
+        h('small', null, i < items.length - 1 ? '次の' + name : '最初の' + name + 'にもどる'), h('b', null, nx.data.title))));
   }
 
-  const crumb = (isLatest ? '今日の雑学 ' : jDate(it.date) + 'の雑学 ') + it.n + '/' + items.length + (d.keyword ? '　' + d.keyword : '');
+  const crumb = (isLatest ? '今日の' + name + ' ' : jDate(it.date) + 'の' + name + ' ') + it.n + '/' + items.length + (d.keyword ? '　' + d.keyword : '');
   return h('div', { class: 'tv' },
     h('div', { class: 'wrap' },
-      h('div', { class: 'abar' }, h('div', { class: 'crumb' }, crumb), xButton(() => back('#/trivia/' + it.date), '一覧に戻る')),
+      h('div', { class: 'abar' }, h('div', { class: 'crumb' }, crumb), xButton(() => back(K === 'manner' ? '#/manner' : '#/trivia/' + it.date), '一覧に戻る')),
       art));
 }

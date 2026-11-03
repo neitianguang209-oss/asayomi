@@ -12,15 +12,15 @@ import { showLayer, closeLayer, hasLayer, xButton } from './ui.js';
 import { icon } from './art.js';
 
 const viewEl = document.getElementById('view');
-const app = { mode: 'trivia', date: { trivia: null, news: null }, baseKey: '', ver: 0, dirty: false };
-try { const m = localStorage.getItem('asayomi:mode'); if (m === 'news' || m === 'manner') app.mode = m; } catch (e) { /* 既定のまま */ }
+const app = { mode: 'news', date: { trivia: null, news: null }, baseKey: '', ver: 0, dirty: false };
+try { const m = localStorage.getItem('asayomi:mode'); if (m === 'trivia' || m === 'manner') app.mode = m; } catch (e) { /* 既定のまま */ }
 
 /* ---------- 上のバー ---------- */
 const bar = { seg: {}, badge: null };
 function buildBar() {
   const el = document.getElementById('bar');
   const seg = h('div', { class: 'seg', role: 'tablist', 'aria-label': '雑学・ニュース・マナーの切り替え' });
-  for (const [mode, label] of [['trivia', '雑学'], ['news', 'ニュース'], ['manner', 'マナー']]) {
+  for (const [mode, label] of [['news', 'ニュース'], ['trivia', '雑学'], ['manner', 'マナー']]) {
     const b = h('button', { type: 'button', role: 'tab' }, label);
     b.addEventListener('click', () => {
       if (app.mode === mode) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
@@ -37,8 +37,7 @@ function buildBar() {
     h('button', { class: 'ib', type: 'button', 'aria-label': 'きろく・設定', onclick: () => go('#/me') }, icon('me')))));
 }
 function paintBar() {
-  bar.seg.manner.setAttribute('aria-selected', String(app.mode === 'manner'));
-  for (const mode of ['trivia', 'news']) {
+  for (const mode of ['news', 'trivia', 'manner']) {
     const b = bar.seg[mode];
     b.setAttribute('aria-selected', String(app.mode === mode));
     // 開いていない方に、まだ1本も読んでいない最新分があれば赤い点
@@ -99,7 +98,7 @@ function parseHash() {
 function missingPage(kind, date) {
   return h('div', { class: 'page' }, h('div', { class: 'wrap' },
     h('div', { class: 'pbar' }, h('h1', null, '見つかりません'), xButton(() => back('#/' + kind))),
-    h('div', { class: 'empty' }, (isDate(date) ? jDate(date) + 'の' : 'リンク先の') + (kind === 'trivia' ? '雑学' : 'ニュース') + 'が見つかりませんでした。', h('br'),
+    h('div', { class: 'empty' }, (isDate(date) ? jDate(date) + 'の' : 'リンク先の') + ({ trivia: '雑学', news: 'ニュース', manner: 'マナー' }[kind] || '記事') + 'が見つかりませんでした。', h('br'),
       '通信できる所でもう一度ひらくと出てくるかもしれません。')));
 }
 
@@ -109,6 +108,20 @@ async function route() {
   const p = parseHash();
   const head = p[0];
 
+  if (head === 'manner' && p[2] && isDate(p[1])) {
+    // マナーの記事(雑学と同じ形で出す)。下はマナー帳のまま
+    if (!app.baseKey) { app.mode = 'manner'; renderBase(); }
+    const n = parseInt(p[2], 10);
+    if (!store.item('manner', p[1], n)) await store.fetchDay('manner', p[1]);
+    await store.ensureArt('manner', p[1]);
+    if (seq !== routeSeq) return;
+    const it = store.item('manner', p[1], n);
+    if (!it) { showLayer(missingPage('manner', p[1]), 'in-u'); paintBar(); return; }
+    store.markRead(it);
+    showLayer(triviaArticle(it), 'in-r');
+    paintBar();
+    return;
+  }
   if (head === 'trivia' || head === 'news') {
     if (p[2] && isDate(p[1])) {
       // 記事。下の一覧はそのまま(まだ何も出していなければ、その種類の最新を出しておく)
@@ -182,9 +195,9 @@ async function boot() {
   store.on('content', refreshBase);
   store.on('state', debounce(refreshBase, 200));
   setRouter(route);
-  if (!store.latest('trivia') && !store.latest('news')) {
+  if (!store.latest('trivia') && !store.latest('news') && !store.latest('manner')) {
     // はじめて開いた端末: 最新の1日分だけ先に取ってすぐ出す(残りは裏で取り込む)
-    await Promise.all([store.quick('trivia'), store.quick('news')]);
+    await Promise.all([store.quick('trivia'), store.quick('news'), store.quick('manner')]);
   }
   await route();
   refresh(true);

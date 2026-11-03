@@ -1,8 +1,10 @@
 // マナー帳: 毎朝の雑学のうち「マナー・作法」の回(genre: manner)を、場面ごとに集めて読み返せるようにする
-import { h, clear, mdDate } from './util.js';
+import { h, clear, mdDate, todayJST } from './util.js';
 import * as store from './store.js';
 import { glyph } from './art.js';
 import { go } from './nav.js';
+import { listenCard } from './listen.js';
+import { claudeButton } from './talk.js';
 
 // 場面の分け方(配信の mannerCat。無ければ genreLabel の中の言葉で推し量る)
 export const MANNER_CATS = [
@@ -22,9 +24,18 @@ export function mannerCat(it) {
   for (const [name, re] of MANNER_CATS) if (re.test(s)) return name;
   return 'そのほか';
 }
-export const mannerItems = () => store.allItems('trivia').filter((it) => it.data.genre === 'manner');
+// 11/3 までは雑学の2本目に入れていた(genre: manner)。11/4 からはマナーとして別に届く(kind: manner)
+export const mannerItems = () => store.allItems('manner').concat(store.allItems('trivia').filter((it) => it.data.genre === 'manner'));
 
 const view = { cat: 'all', shown: 30 };
+function row(it) {
+  return h('button', { class: 'rowb' + (store.isRead(it) ? ' read' : ''), type: 'button', onclick: () => go('#/' + it.kind + '/' + it.date + '/' + it.n) },
+    h('span', { class: 'mg' }, glyph('manner')),
+    h('span', { class: 'rt' },
+      h('em', null, mannerCat(it) + '・' + mdDate(it.date)),
+      h('b', null, it.data.title),
+      h('small', null, store.briefOf(it))));
+}
 export function renderManner(root) {
   clear(root);
   root.className = 'tv mn';
@@ -32,10 +43,19 @@ export function renderManner(root) {
   root.append(wrap);
   const all = mannerItems();
   wrap.append(h('header', { class: 'top' }, h('h1', null, 'マナー帳')));
-  wrap.append(h('p', { class: 'greet' }, h('span', null, '礼儀・作法・言葉づかいを、場面ごとにためていきます。毎朝の雑学の2本目が、この帳面に入ります。')));
+  wrap.append(h('p', { class: 'greet' }, h('span', null, '礼儀・作法・言葉づかいを、場面ごとにためていきます。毎朝ニュース・雑学と一緒に届きます。')));
   if (!all.length) {
-    wrap.append(h('div', { class: 'boot' }, h('b', null, 'まだ1本もありません'), '次の朝の配信から、毎日1本ずつたまります。'));
+    wrap.append(h('div', { class: 'boot' }, h('b', null, 'まだ1本もありません'), '次の朝の配信から、毎日たまっていきます。'));
     return;
+  }
+  // 今日の分(いちばん新しい日)と、聞くボタン
+  const last = store.latest('manner');
+  if (last) {
+    wrap.append(h('div', { class: 'lgrp tvl' }, listenCard('manner', last),
+      h('div', { class: 'lalt' }, claudeButton('manner', last), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く'))));
+    const today = h('div', { class: 'mlist' }, h('div', { class: 'mh' }, last === todayJST() ? '今日のマナー' : mdDate(last) + 'のマナー'));
+    for (const it of store.itemsOf('manner', last)) today.append(row(it));
+    wrap.append(today);
   }
   const unread = all.filter((it) => !store.isRead(it)).length;
   const counts = new Map();
@@ -58,15 +78,7 @@ export function renderManner(root) {
     clear(feed);
     const list = all.filter((it) => view.cat === 'all' || (view.cat === 'unread' ? !store.isRead(it) : mannerCat(it) === view.cat));
     const box = h('div', { class: 'mlist' });
-    for (const it of list.slice(0, view.shown)) {
-      const d = it.data;
-      box.append(h('button', { class: 'rowb' + (store.isRead(it) ? ' read' : ''), type: 'button', onclick: () => go('#/trivia/' + it.date + '/' + it.n) },
-        h('span', { class: 'mg' }, glyph('manner')),
-        h('span', { class: 'rt' },
-          h('em', null, mannerCat(it) + '・' + mdDate(it.date)),
-          h('b', null, d.title),
-          h('small', null, store.briefOf(it)))));
-    }
+    for (const it of list.slice(0, view.shown)) box.append(row(it));
     feed.append(box);
     if (list.length > view.shown) {
       feed.append(h('button', { class: 'morebtn', type: 'button', onclick: () => { view.shown += 30; fill(); } }, 'もっと見る(あと' + (list.length - view.shown) + '本)'));

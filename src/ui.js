@@ -118,3 +118,21 @@ export function dayNav(kind, date) {
 export function readMark() {
   return h('span', { class: 'readmark' }, icon('check', 13), '読んだ');
 }
+
+/* ---------- 読み終わりに次の種類へ(ニュース → 雑学 → マナー → ニュース) ---------- */
+const NEXT = { news: 'trivia', trivia: 'manner', manner: 'news' };
+const KNAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
+export function crossButton(it) {
+  const items = store.itemsOf(it.kind, it.date);
+  if (items.indexOf(it) !== items.length - 1) return null;
+  for (let k = NEXT[it.kind]; k !== it.kind; k = NEXT[k]) {
+    // 同じ日の分。無ければその種類の最新の日
+    const day = store.itemsOf(k, it.date).length ? it.date : store.latest(k);
+    const list = day ? store.itemsOf(k, day) : [];
+    if (!list.length) continue;
+    const back = k === 'news' && it.kind === 'manner';
+    return h('button', { class: 'cross', type: 'button', onclick: () => replace('#/' + k + '/' + list[0].date + '/' + list[0].n) },
+      h('small', null, back ? '今日の分はここまで。ニュースにもどる' : KNAME[it.kind] + 'はここまで。続けて' + KNAME[k] + 'へ'), h('b', null, list[0].data.title));
+  }
+  return null;
+}

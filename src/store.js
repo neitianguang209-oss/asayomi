@@ -325,12 +325,12 @@ export function searchIndex() {
       }
       return a.filter(Boolean).join(' ');
     };
-    for (const kind of ['trivia', 'news']) {
+    for (const kind of ['trivia', 'news', 'manner']) {
       for (const it of allItems(kind)) {
         const d = it.data;
         const head = [d.title, d.keyword, d.gist, d.thread].filter(Boolean).join(' ');
         const rest = stripMarkup([d.lede, body(d), d.talk, d.extra && d.extra.text, d.life, d.history].filter(Boolean).join(' '));
-        out.push({ type: kind === 'trivia' ? 't' : 'n', it, head: norm(head), rest: norm(rest), raw: rest });
+        out.push({ type: kind === 'news' ? 'n' : 't', it, head: norm(head), rest: norm(rest), raw: rest });
       }
     }
     for (const e of terms().values()) out.push({ type: 'w', term: e, head: norm(e.term), rest: norm(e.desc), raw: e.desc });
@@ -439,7 +439,8 @@ async function doSyncState(opts) {
 }
 
 /* ---------- 記録の読み書き(画面から使う形) ---------- */
-const K = { trivia: 't', news: 'n' };
+const K = { trivia: 't', news: 'n', manner: 'm' };
+const KIND = { t: 'trivia', n: 'news', m: 'manner' };
 const rid = (prefix, it) => prefix + ':' + K[it.kind] + ':' + it.date + ':' + it.n;
 export function pref() { return Object.assign({ autoReview: true, quizSize: 10 }, st.get('pref') || {}); }
 export function setPref(patch) { st.set('pref', Object.assign(pref(), patch)); }
@@ -465,7 +466,7 @@ export function markRead(it) {
   if (st.has(id)) return false;
   st.set(id, { at: new Date().toISOString() });
   bump('r');
-  if (it.kind === 'trivia' && pref().autoReview) addCard(cardIdOf(it));
+  if (it.kind !== 'news' && pref().autoReview) addCard(cardIdOf(it));
   return true;
 }
 export function readCount(kind, date) { return itemsOf(kind, date).filter(isRead).length; }
@@ -491,7 +492,7 @@ export function savedItems() {
   const out = [];
   st.each('save:', (id, data) => {
     const p = id.split(':');
-    const it = item(p[1] === 't' ? 'trivia' : 'news', p[2], +p[3]);
+    const it = item(KIND[p[1]] || 'news', p[2], +p[3]);
     if (it) out.push({ it, at: (data && data.at) || '' });
   });
   return out.sort((a, b) => (a.at < b.at ? 1 : -1)).map((x) => x.it);
@@ -500,7 +501,7 @@ export function recentRead(limit) {
   const out = [];
   st.each('read:', (id, data) => {
     const p = id.split(':');
-    const it = item(p[1] === 't' ? 'trivia' : 'news', p[2], +p[3]);
+    const it = item(KIND[p[1]] || 'news', p[2], +p[3]);
     if (it) out.push({ it, at: (data && data.at) || '' });
   });
   return out.sort((a, b) => (a.at < b.at ? 1 : -1)).slice(0, limit).map((x) => x.it);
@@ -509,7 +510,7 @@ export function sentId(it) { return rid('sent', it); }
 export function todoId(it) { return rid('todo', it); }
 
 /* ---------- 復習カード ---------- */
-export function cardIdOf(it) { return 'card:t:' + it.date + ':' + it.n; }
+export function cardIdOf(it) { return 'card:' + (it.kind === 'manner' ? 'm' : 't') + ':' + it.date + ':' + it.n; }
 export function cardIdTerm(term) { return 'card:w:' + norm(term); }
 export function addCard(id) {
   if (st.has(id)) return false;
@@ -519,9 +520,9 @@ export function addCard(id) {
 export function removeCard(id) { st.del(id); }
 // カードが指している雑学・用語(まだ中身が届いていなければ null)
 export function cardTarget(id) {
-  if (id.indexOf('card:t:') === 0) {
+  if (id.indexOf('card:t:') === 0 || id.indexOf('card:m:') === 0) {
     const p = id.split(':');
-    const it = item('trivia', p[2], +p[3]);
+    const it = item(p[1] === 'm' ? 'manner' : 'trivia', p[2], +p[3]);
     return it ? { type: 't', it } : null;
   }
   if (id.indexOf('card:w:') === 0) {

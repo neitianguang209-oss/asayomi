@@ -11,8 +11,10 @@ import { openSheet, toast } from './ui.js';
 import { pauseListening, listenBoth } from './listen.js';
 
 const FN = SB_URL + '/functions/v1/asayomi-voice';
-const NAME = { news: 'ニュース', trivia: '雑学' };
-const other = (k) => (k === 'news' ? 'trivia' : 'news');
+const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
+// 続けるときの順はニュース → 雑学 → マナー(まとめて聞くと同じ)
+const ORDER = ['news', 'trivia', 'manner'];
+const rest = (k) => { const i = ORDER.indexOf(k); return [...ORDER.slice(i + 1), ...ORDER.slice(0, i)]; };
 const md = (date) => Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
 const plain = (s) => stripMarkup(s || '').trim();
 const paras = (p) => (Array.isArray(p) ? p : [p]).filter(Boolean).map(plain).join('');
@@ -32,7 +34,7 @@ function newsText(it) {
 function triviaText(it) {
   const d = it.data;
   const g = d.genreLabel || (GENRES[d.genre] || {}).label || '';
-  const out = ['■ 雑学' + it.n + '本目 [' + g + '] ' + plain(d.title)];
+  const out = ['■ ' + NAME[it.kind] + it.n + '本目 [' + g + '] ' + plain(d.title)];
   if (d.gist) out.push('ひとことで: ' + plain(d.gist));
   for (const s of d.sections || []) out.push((s.h ? '【' + plain(s.h) + '】' : '') + paras(s.p));
   if (d.talk) out.push('会話で使える一言: ' + plain(d.talk));
@@ -52,7 +54,7 @@ function dayFor(kind, fromKind, date) {
   return store.itemsOf(kind, date).length ? date : store.latest(kind);
 }
 function plan(kind, date, n, both) {
-  const kinds = n ? [kind] : both ? [kind, other(kind)] : [kind];
+  const kinds = n ? [kind] : both ? [kind, ...rest(kind)] : [kind];
   return kinds.map((k) => {
     const d = k === kind ? date : dayFor(k, kind, date);
     const items = d ? store.itemsOf(k, d).filter((it) => !n || it.n === n).sort((x, y) => x.n - y.n) : [];
@@ -64,16 +66,17 @@ function howTo(parts, n) {
   const say = [];
   say.push('私は通勤・通学中に、音声モードで歩きながら聞いています。記号や箇条書きは使わず、耳で聞いてわかる話し言葉でお願いします。');
   if (n) {
-    say.push(parts[0].kind === 'news' ? 'このニュースを1分くらいで話して、' : 'この雑学を40秒くらいで話して、');
+    say.push(parts[0].kind === 'news' ? 'このニュースを1分くらいで話して、' : 'この' + NAME[parts[0].kind] + 'を40秒くらいで話して、');
     say.push('「質問ある？」と聞いてください。わからない言葉を聞いたら、記事をふまえて短く答えてください。');
     return say.join('');
   }
   parts.forEach((p, i) => {
     const head = i === 0 ? 'まず' : 'それが終わったら「次は' + NAME[p.kind] + 'です」と言って、';
     if (p.kind === 'news') say.push(head + 'ニュース' + p.items.length + '本を1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
+    else if (p.kind === 'manner') say.push(head + 'マナー' + p.items.length + '本を1本ずつ、やさしく教えるように1本40秒くらいで話して、なぜそうするのかの由来も添え、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
     else say.push(head + '雑学' + p.items.length + '本を1本ずつ、友だちに話すように1本40秒くらいで話して、最後に「会話で使える一言」を添え、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
   });
-  if (parts.some((p) => p.kind === 'trivia')) say.push('最後まで話し終えたら「雑学のクイズやる？」と聞いて、やるなら雑学の記事にあるクイズを1問ずつ出してください。');
+  if (parts.some((p) => p.kind !== 'news')) say.push('最後まで話し終えたら「クイズやる？」と聞いて、やるなら雑学・マナーの記事にあるクイズを1問ずつ出してください。');
   say.push('わからない言葉を聞いたら、記事をふまえて短く答えてください。「次」と言われたら次へ、「飛ばして」と言われたら次の話へ進んでください。');
   return say.join('');
 }
@@ -105,7 +108,7 @@ const setBoth = (v) => store.setPref({ listenBoth: v });
 
 export function openClaude(kind, date, n) {
   pauseListening();
-  const canBoth = !n && !!store.latest(other(kind));
+  const canBoth = !n && rest(kind).some((k) => store.latest(k));
   let both = canBoth && wantBoth();
   let parts = plan(kind, date, n, both);
   if (!parts.length) { toast('話せる記事がありません'); return; }
@@ -121,7 +124,7 @@ export function openClaude(kind, date, n) {
     sheet.append(h('h3', null, 'Claudeと話して聞く'));
     if (canBoth) {
       const seg = h('div', { class: 'tseg', role: 'radiogroup', 'aria-label': '聞く順番' });
-      const opts = [[true, NAME[kind] + ' → ' + NAME[other(kind)]], [false, NAME[kind] + 'だけ']];
+      const opts = [[true, [kind, ...rest(kind)].filter((k) => k === kind || store.latest(k)).map((k) => NAME[k]).join(' → ')], [false, NAME[kind] + 'だけ']];
       for (const [v, label] of opts) {
         const b = h('button', { type: 'button', role: 'radio', 'aria-checked': String(both === v) }, label);
         b.addEventListener('click', async () => {

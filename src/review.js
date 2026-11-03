@@ -14,7 +14,7 @@ function targetsFromDue() {
   return store.dueCards().slice(0, size).map((x) => ({ id: x.id, target: store.cardTarget(x.id) }));
 }
 function targetsRandom(n) {
-  const pool = store.allItems('trivia');
+  const pool = store.allItems('trivia').concat(store.allItems('manner'));
   return shuffle(pool).slice(0, n).map((it) => ({ id: store.cardIdOf(it), target: { type: 't', it } }));
 }
 function start(random) {

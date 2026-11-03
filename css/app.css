@@ -594,3 +594,6 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .mn .rowb .mg{width:40px;height:40px;display:block}
 .mn .rowb .mg svg{width:40px;height:40px}
 .mn .rowb em{font-style:normal;font-size:12px;font-weight:700;color:#9a6c1c}
+.mn .mlist + .tabs{margin-top:22px}
+.mn .mlist .mh{font-size:13px;font-weight:900;color:var(--ink2);letter-spacing:.06em;padding:12px 0 2px}
+.mn .lgrp{margin-bottom:14px}

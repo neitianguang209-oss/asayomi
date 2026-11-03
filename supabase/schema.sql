@@ -19,7 +19,7 @@ insert into public.asayomi_meta(key, value) values ('epoch', to_jsonb('1'::text)
   on conflict (key) do nothing;
 
 create table if not exists public.asayomi_days (
-  kind text not null check (kind in ('trivia', 'news')),
+  kind text not null check (kind in ('trivia', 'news', 'manner')),
   date date not null,
   data jsonb not null default '{}'::jsonb,
   rev bigint not null default nextval('public.asayomi_rev_seq'),
@@ -28,7 +28,7 @@ create table if not exists public.asayomi_days (
 );
 
 create table if not exists public.asayomi_items (
-  kind text not null check (kind in ('trivia', 'news')),
+  kind text not null check (kind in ('trivia', 'news', 'manner')),
   date date not null,
   n int not null check (n between 1 and 20),
   data jsonb not null,
@@ -97,8 +97,8 @@ declare
   v_count int;
   v_warn jsonb := '[]'::jsonb;
 begin
-  if v_kind is null or v_kind not in ('trivia', 'news') then
-    raise exception 'kind は "trivia" か "news" にしてください';
+  if v_kind is null or v_kind not in ('trivia', 'news', 'manner') then
+    raise exception 'kind は "trivia"・"news"・"manner" のどれかにしてください';
   end if;
   begin
     v_date := (p->>'date')::date;
@@ -404,3 +404,25 @@ as $$
 $$;
 revoke all on function public.asayomi_set_yomi(text, date, int, jsonb) from public, anon, authenticated;
 grant execute on function public.asayomi_set_yomi(text, date, int, jsonb) to service_role;
+
+-- 3つ目の配信「マナー」(kind = 'manner')。asayomi_audio の kind にも manner を足してある
+-- マナー: これまでに出したテーマの一覧(マナーの定期タスクが最初に読む)
+create or replace function public.asayomi_manner_history()
+returns text
+language sql
+stable
+security definer
+set search_path to 'public', 'pg_catalog'
+as $$
+  select coalesce(string_agg(block, E'\n\n' order by date), '(まだありません)')
+  from (
+    select date,
+           '## ' || date::text || E'\n' ||
+           string_agg(n::text || '. 〔' || coalesce(data->>'mannerCat', '') || '〕' || coalesce(nullif(data->>'history', ''), coalesce(data->>'title', '')),
+                      E'\n' order by n) as block
+    from public.asayomi_items
+    where kind = 'manner' or (kind = 'trivia' and data->>'genre' = 'manner')
+    group by date
+  ) t;
+$$;
+revoke all on function public.asayomi_manner_history() from public, anon, authenticated;
