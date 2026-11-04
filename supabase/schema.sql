@@ -447,3 +447,23 @@ as $$
   ) t;
 $$;
 revoke all on function public.asayomi_study_history() from public, anon, authenticated;
+
+-- マナーなどのカリキュラム(大ジャンル → 小分け → 1回分のテーマ)。中身は supabase/manner-curriculum.sql(tools/manner-curriculum.py が書き出す)
+create table if not exists public.asayomi_curriculum (
+  id bigint generated always as identity primary key,
+  kind text not null,
+  genre text not null,
+  sub text not null,
+  topic text not null,
+  ord int not null default 0,
+  used_on date,
+  used_n int,
+  source text not null default 'はじめから',
+  created_at timestamptz not null default now(),
+  unique (kind, topic)
+);
+alter table public.asayomi_curriculum enable row level security;
+revoke all on public.asayomi_curriculum from anon, authenticated;
+-- 関数: asayomi_curriculum_next(kind, count)(しばらく出ていない大ジャンル・小分けから順に)/ asayomi_curriculum_done(id, date, n)
+--       asayomi_curriculum_add(kind, genre, sub, topic) / asayomi_curriculum_view(kind)(アプリが読む。公開キーで呼べる)
+-- 定義は Supabase のマイグレーション asayomi_curriculum・asayomi_curriculum_next_rotate_sub を参照

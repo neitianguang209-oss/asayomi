@@ -6,21 +6,25 @@ import { go } from './nav.js';
 import { listenCard } from './listen.js';
 import { claudeButton } from './talk.js';
 
-// 場面の分け方(配信の mannerCat。無ければ genreLabel の中の言葉で推し量る)
+// 大ジャンル(配信の mannerCat = カリキュラムの genre)。11/4 までの記事は古い分け方なので、言葉から推し量る
 export const MANNER_CATS = [
-  ['ビジネス', /ビジネス|名刺|上座|下座|席次|面接|会議|職場|上司|商談|訪問先/],
-  ['食事・お酒', /食事|テーブル|箸|和食|洋食|中華|お酒|乾杯|酒席|飲み会|お酌|会食/],
-  ['冠婚葬祭', /結婚|披露宴|ご祝儀|祝儀|葬|通夜|香典|焼香|法事|法要|喪|弔/],
-  ['言葉づかい', /敬語|言葉|言い回し|クッション言葉|あいさつ|挨拶/],
-  ['贈り物・季節の行事', /贈|のし|熨斗|水引|中元|歳暮|お見舞い|手土産|お返し|年賀|節句/],
-  ['手紙・電話・メール', /手紙|電話|メール|はがき|封筒|返信/],
-  ['訪問・おつきあい', /訪問|招待|お宅|近所|おもてなし/],
-  ['海外', /海外|外国|国の|欧米|チップ/],
+  ['食事・テーブルマナー', /食事|テーブル|箸|和食|洋食|中華|寿司|天ぷら|そば|フランス|イタリア|アフタヌーン|立食|会食|ナプキン/],
+  ['お酒・飲み物', /お酒|乾杯|酒席|飲み会|お酌|ワイン|シャンパン|ビール|バー|カクテル|日本酒|お茶|コーヒー|紅茶/],
+  ['ビジネス', /ビジネス|名刺|上座|下座|席次|面接|会議|職場|上司|商談|メール|電話|敬語|承知|了解|就活/],
+  ['言葉づかい・会話', /言葉づかい|言い回し|クッション言葉|あいさつ|挨拶|断り方|謝り|手紙|はがき|時候/],
+  ['結婚式・お祝い', /結婚|披露宴|ご祝儀|祝儀|お祝い|祝い|内祝/],
+  ['お葬式・弔事', /葬|通夜|香典|焼香|法事|法要|喪|弔|訃報|お悔やみ/],
+  ['訪問・おもてなし', /訪問|お宅|手土産|和室|畳|座布団|床の間|おもてなし|お迎え/],
+  ['社交・フォーマルな場', /パーティー|社交|フォーマル|劇場|コンサート|美術館|式典|茶会|ドレスコード/],
+  ['服装・身だしなみ', /服装|身だしなみ|スーツ|ネクタイ|着物|浴衣|靴|香水/],
+  ['日本の礼法・しきたり', /お辞儀|礼法|神社|お寺|参拝|のし|熨斗|水引|中元|歳暮|お年玉|しきたり/],
+  ['旅行・公共の場', /旅行|旅館|温泉|ホテル|新幹線|飛行機|電車|タクシー|公共|病院|お見舞い/],
+  ['国際マナー', /海外|外国|国際|チップ|欧米|握手|ハグ|ハラール/],
 ];
 export function mannerCat(it) {
   const d = it.data;
   if (d.mannerCat && MANNER_CATS.some((c) => c[0] === d.mannerCat)) return d.mannerCat;
-  const s = (d.genreLabel || '') + ' ' + (d.title || '');
+  const s = (d.topic || '') + ' ' + (d.genreLabel || '') + ' ' + (d.title || '');
   for (const [name, re] of MANNER_CATS) if (re.test(s)) return name;
   return 'そのほか';
 }
@@ -88,6 +92,7 @@ function renderShelf(root, kind) {
     for (const it of store.itemsOf(kind, last)) today.append(row(it, conf));
     wrap.append(today);
   }
+  if (kind === 'manner') wrap.append(curriculumBox());
   const unread = all.filter((it) => !store.isRead(it)).length;
   const counts = new Map();
   for (const it of all) counts.set(conf.cat(it), (counts.get(conf.cat(it)) || 0) + 1);
@@ -116,4 +121,56 @@ function renderShelf(root, kind) {
     }
   }
   fill();
+}
+
+/* ---------- カリキュラム(全テーマと進み具合) ---------- */
+// 毎朝の配信は、まだやっていないテーマを大ジャンルを回しながら順に取り上げる。ここでは全体のどこまで進んだかを見せる
+const CUR_KEY = 'asayomi:curriculum:manner';
+let curCache = null;
+try { curCache = JSON.parse(localStorage.getItem(CUR_KEY) || 'null'); } catch (e) { /* 無くてよい */ }
+const curOpen = new Set();
+function curriculumBox() {
+  const box = h('div', { class: 'cur' });
+  const paint = (rows) => {
+    clear(box);
+    if (!rows || !rows.length) { box.append(h('div', { class: 'tl' }, 'カリキュラム'), h('p', { class: 'sd' }, '読み込んでいます…')); return; }
+    const done = rows.filter((r) => r.on).length;
+    box.append(h('div', { class: 'tl' }, 'カリキュラム', h('small', null, '全' + rows.length + 'テーマ中 ' + done + ' 済み')));
+    const genres = [];
+    for (const r of rows) {
+      let g = genres.find((x) => x.name === r.genre);
+      if (!g) genres.push(g = { name: r.genre, subs: [] });
+      let s = g.subs.find((x) => x.name === r.sub);
+      if (!s) g.subs.push(s = { name: r.sub, rows: [] });
+      s.rows.push(r);
+    }
+    for (const g of genres) {
+      const list = g.subs.flatMap((s) => s.rows);
+      const n = list.filter((r) => r.on).length;
+      const head = h('button', { class: 'cg' + (curOpen.has(g.name) ? ' open' : ''), type: 'button' },
+        h('b', null, g.name), h('span', { class: 'bar' }, h('i', { style: { width: Math.round(n / list.length * 100) + '%' } })), h('small', null, n + '/' + list.length));
+      const body = h('div', { class: 'cgb', hidden: !curOpen.has(g.name) });
+      for (const s of g.subs) {
+        body.append(h('div', { class: 'cs' }, s.name));
+        for (const r of s.rows) {
+          body.append(r.on && r.n
+            ? h('button', { class: 'ct on', type: 'button', onclick: () => go('#/manner/' + r.on + '/' + r.n) }, '✓ ' + r.topic)
+            : h('div', { class: 'ct' }, r.topic));
+        }
+      }
+      head.addEventListener('click', () => {
+        if (curOpen.has(g.name)) curOpen.delete(g.name); else curOpen.add(g.name);
+        head.classList.toggle('open'); body.hidden = !body.hidden;
+      });
+      box.append(head, body);
+    }
+  };
+  paint(curCache);
+  store.rpc('asayomi_curriculum_view', { p_kind: 'manner' }).then((rows) => {
+    if (!Array.isArray(rows)) return;
+    curCache = rows;
+    try { localStorage.setItem(CUR_KEY, JSON.stringify(rows)); } catch (e) { /* 覚えられなくても動く */ }
+    if (box.isConnected) paint(rows);
+  }).catch(() => { if (!curCache) { clear(box); box.append(h('div', { class: 'tl' }, 'カリキュラム'), h('p', { class: 'sd' }, '通信できるときに、全体の進み具合が出ます')); } });
+  return box;
 }

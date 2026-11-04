@@ -597,3 +597,15 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .mn .mlist + .tabs{margin-top:22px}
 .mn .mlist .mh{font-size:13px;font-weight:900;color:var(--ink2);letter-spacing:.06em;padding:12px 0 2px}
 .mn .lgrp{margin-bottom:14px}
+.mn .cur{margin-top:18px;background:var(--card);border-radius:18px;box-shadow:var(--shadow);padding:14px 16px 8px}
+.mn .cur .tl{font-size:13px;font-weight:900;color:var(--ink2);letter-spacing:.06em;display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px}
+.mn .cur .tl small{font-weight:500;color:var(--sub);letter-spacing:0;font-size:11.5px}
+.mn .cg{display:grid;grid-template-columns:1fr 70px auto;gap:10px;align-items:center;width:100%;background:none;border:0;border-top:1px solid var(--line);padding:11px 0;text-align:left;cursor:pointer;color:inherit;font:inherit}
+.mn .cg b{font-size:14.5px}
+.mn .cg small{font-size:12px;color:var(--sub);min-width:36px;text-align:right}
+.mn .cg .bar{height:6px;border-radius:99px;background:var(--soft);overflow:hidden}
+.mn .cg .bar i{display:block;height:100%;background:#b0812a;border-radius:99px}
+.mn .cgb{padding:0 0 10px 6px}
+.mn .cs{font-size:12px;font-weight:700;color:#9a6c1c;margin:8px 0 2px}
+.mn .ct{display:block;width:100%;text-align:left;background:none;border:0;padding:3px 0;font-size:13.5px;line-height:1.6;color:var(--sub);font-family:inherit}
+.mn .ct.on{color:var(--ink);font-weight:700;cursor:pointer}
