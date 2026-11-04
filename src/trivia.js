@@ -60,7 +60,6 @@ export function renderTrivia(root, date) {
   if (notice) wrap.append(notice);
   wrap.append(h('div', { class: 'lgrp tvl' }, listenCard('trivia', date),
     h('div', { class: 'lalt' }, claudeButton('trivia', date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く(続けてニュースも)'))));
-  if (isLatest) { const nudge = reviewNudge(); if (nudge) wrap.append(nudge); }
 
   // タブ: すべて → その日に出たジャンル → これまでの雑学
   const tabs = [{ key: 'all', label: 'すべて' }];

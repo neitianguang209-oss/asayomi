@@ -135,7 +135,9 @@ function curriculumBox() {
     clear(box);
     if (!rows || !rows.length) { box.append(h('div', { class: 'tl' }, 'カリキュラム'), h('p', { class: 'sd' }, '読み込んでいます…')); return; }
     const done = rows.filter((r) => r.on).length;
-    box.append(h('div', { class: 'tl' }, 'カリキュラム', h('small', null, '全' + rows.length + 'テーマ中 ' + done + ' 済み')));
+    // 一巡したら何周も回る(おさらい＋新しい応用テーマ)。いちばん少ない回数＋1 が今の周回
+    const round = Math.min(...rows.map((r) => r.times || 0)) + 1;
+    box.append(h('div', { class: 'tl' }, 'カリキュラム', h('small', null, (round > 1 ? round + '周目・' : '') + '全' + rows.length + 'テーマ中 ' + done + ' 済み')));
     const genres = [];
     for (const r of rows) {
       let g = genres.find((x) => x.name === r.genre);
@@ -153,9 +155,11 @@ function curriculumBox() {
       for (const s of g.subs) {
         body.append(h('div', { class: 'cs' }, s.name));
         for (const r of s.rows) {
+          const tag = (r.times > 1 ? ' ×' + r.times : '') + (r.level === '応用' ? '' : '');
+          const lv = r.level === '応用' ? h('i', { class: 'lv' }, '応用') : null;
           body.append(r.on && r.n
-            ? h('button', { class: 'ct on', type: 'button', onclick: () => go('#/manner/' + r.on + '/' + r.n) }, '✓ ' + r.topic)
-            : h('div', { class: 'ct' }, r.topic));
+            ? h('button', { class: 'ct on', type: 'button', onclick: () => go('#/manner/' + r.on + '/' + r.n) }, '✓ ' + r.topic + tag, lv)
+            : h('div', { class: 'ct' }, r.topic, lv));
         }
       }
       head.addEventListener('click', () => {

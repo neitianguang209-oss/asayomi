@@ -1,5 +1,5 @@
-// 復習: 読んだ雑学と「覚える」にした用語を、忘れかけた頃(1日→2日→5日→12日→30日→90日)に出し直す。
-// クイズ付きの雑学と用語は3択、それ以外は「思い出す→答えを見る→自己採点」。
+// 振り返り: ふだんは音声で聞くだけなので「たまっています」は出さない。たまに振り返りたいときに、
+// 雑学・マナー・学問・ニュースの用語から選んで5問ずつ。クイズ付きは3択、それ以外は「思い出す→答えを見る→自己採点」。
 import { h, clear, shuffle, mdDate, addDays, todayJST } from './util.js';
 import { GENRES, INTERVALS, MASTERED } from './config.js';
 import * as store from './store.js';
@@ -13,13 +13,22 @@ function targetsFromDue() {
   const size = store.pref().quizSize || 10;
   return store.dueCards().slice(0, size).map((x) => ({ id: x.id, target: store.cardTarget(x.id) }));
 }
-function targetsRandom(n) {
-  const pool = store.allItems('trivia').concat(store.allItems('manner'), store.allItems('study'));
-  return shuffle(pool).slice(0, n).map((it) => ({ id: store.cardIdOf(it), target: { type: 't', it } }));
+// どこから出すか(読んだものを先に。足りなければまだ読んでいないものも)
+const FROM = [['trivia', '雑学'], ['manner', 'マナー'], ['study', '学問'], ['terms', 'ニュースの用語'], ['all', 'ぜんぶ']];
+function poolOf(from) {
+  const kinds = from === 'all' ? ['trivia', 'manner', 'study'] : from === 'terms' ? [] : [from];
+  const items = kinds.flatMap((k) => store.allItems(k)).map((it) => ({ id: store.cardIdOf(it), target: { type: 't', it }, read: store.isRead(it) }));
+  const terms = from === 'terms' || from === 'all'
+    ? Array.from(store.terms().values()).map((e) => ({ id: store.cardIdTerm(e.term), target: { type: 'w', term: e }, read: true })) : [];
+  return items.concat(terms);
 }
-function start(random) {
-  const queue = random ? targetsRandom(5) : targetsFromDue();
-  session = { queue, idx: 0, right: 0, answered: 0, random: !!random, done: false, day: todayJST() };
+function targetsRandom(n, from) {
+  const pool = shuffle(poolOf(from || 'all'));
+  return pool.filter((x) => x.read).concat(pool.filter((x) => !x.read)).slice(0, n).map(({ id, target }) => ({ id, target }));
+}
+function start(random, from) {
+  const queue = random ? targetsRandom(5, from) : targetsFromDue();
+  session = { queue, idx: 0, right: 0, answered: 0, random: !!random, from: from || 'all', done: false, day: todayJST() };
 }
 
 function question(target) {
@@ -47,20 +56,32 @@ function nextLabel(box) {
 
 export function reviewPage() {
   // 「記事を読み直す」で記事へ行って戻ってきたときだけ途中から続ける。それ以外は、いま出すべき問題で始め直す
-  if (!session || !session.resume || session.done || session.day !== todayJST()) start(false);
-  session.resume = false;
+  if (!session || !session.resume || session.done || session.day !== todayJST()) session = null; // 開くたびに、何を振り返るか選ぶところから
+  if (session) session.resume = false;
   const root = h('div', { class: 'page' });
   const wrap = h('div', { class: 'wrap' });
   root.append(wrap);
   const paint = () => {
     clear(wrap);
-    if (!session.queue.length) emptyView(wrap, paint);
+    if (!session) menuView(wrap, paint);
+    else if (!session.queue.length) emptyView(wrap, paint);
     else if (session.idx >= session.queue.length) endView(wrap, paint);
     else cardView(wrap, paint);
     root.scrollTop = 0;
   };
   paint();
   return root;
+}
+
+function menuView(wrap, paint) {
+  wrap.append(h('div', { class: 'pbar' }, h('h1', null, '振り返り'), xButton(() => back('#/'))));
+  wrap.append(h('p', { class: 'rv-lead' }, 'たまに思い出したいときに。選んだところから5問ずつ出します。'));
+  for (const [k, label] of FROM) {
+    const n = poolOf(k).length;
+    if (!n) continue;
+    wrap.append(h('button', { class: 'bigbtn' + (k === 'all' ? '' : ' sub'), type: 'button', onclick: () => { start(true, k); paint(); } }, label + 'から5問', h('small', null, '（' + n + '本）')));
+  }
+  wrap.append(statTiles());
 }
 
 function topBar(wrap, title) {
@@ -87,7 +108,7 @@ function cardView(wrap, paint) {
   if (tg.type === 't') {
     const d = tg.it.data;
     kind.append(h('span', { class: 'lab', style: { '--c': colorOf(tg.it) } }, h('i'), d.genreLabel || (GENRES[d.genre] || {}).label || '雑学'),
-      h('span', null, mdDate(tg.it.date) + ' の雑学'));
+      h('span', null, mdDate(tg.it.date) + ' の' + ({ manner: 'マナー', study: '学問' }[tg.it.kind] || '雑学')));
   } else {
     kind.append(h('span', { class: 'lab', style: { '--c': 'var(--link)' } }, h('i'), 'ニュースの用語'));
   }
@@ -182,26 +203,25 @@ function cardView(wrap, paint) {
 function statTiles() {
   const cs = store.cardStats();
   const t = (num, unit, label) => h('div', { class: 'stat' }, h('b', null, String(num), h('small', null, unit)), h('span', null, label));
-  return h('div', { class: 'stats' }, t(store.streak(), '日', '続けて開いた'), t(cs.mastered, '個', '覚えた'), t(cs.learning, '個', '復習中'));
+  return h('div', { class: 'stats' }, t(store.streak(), '日', '続けて開いた'), t(cs.mastered, '個', '覚えた'));
 }
 
 function endView(wrap, paint) {
   const s = session;
   s.done = true;
   topBar(wrap, '復習');
-  const left = store.dueCards().length;
+  const label = (FROM.find((f) => f[0] === s.from) || FROM[4])[1];
   wrap.append(h('div', { class: 'rv-end' },
     h('div', { class: 'big' }, icon('check', 40)),
-    h('h2', null, s.random ? 'おつかれさま！' : left ? 'ひと区切り！' : '今日の復習、おわり'),
-    h('p', null, s.answered ? s.answered + '問中 ' + s.right + '問を覚えていました。' : '')),
-    statTiles());
-  if (left) wrap.append(h('button', { class: 'bigbtn', type: 'button', onclick: () => { start(false); paint(); } }, '続きをやる（あと ' + left + ' 問）'));
-  wrap.append(h('button', { class: 'bigbtn sub', type: 'button', onclick: () => { start(true); paint(); } }, 'これまでの雑学から、ランダムに5問'));
+    h('h2', null, 'おつかれさま！'),
+    h('p', null, s.answered ? s.answered + '問中 ' + s.right + '問を覚えていました。' : '')));
+  wrap.append(h('button', { class: 'bigbtn', type: 'button', onclick: () => { start(true, s.from); paint(); } }, label + 'から、もう5問'));
+  wrap.append(h('button', { class: 'bigbtn sub', type: 'button', onclick: () => { session = null; paint(); } }, 'ほかのところから選ぶ'));
   wrap.append(h('button', { class: 'bigbtn sub', type: 'button', onclick: () => back('#/') }, 'とじる'));
 }
 
 function emptyView(wrap, paint) {
-  topBar(wrap, '復習');
+  topBar(wrap, '振り返り');
   const total = store.st.count('card:');
   let next = null;
   store.st.each('card:', (id, c) => { if (c && c.due && (!next || c.due < next)) next = c.due; });

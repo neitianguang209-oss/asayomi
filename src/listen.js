@@ -4,7 +4,7 @@
 //    Gemini から mp3 でもらえなかったときだけ、届いた生の音をこの端末で mp3 にして置く。
 //  - 「ニュース→雑学」「雑学→ニュース」「片方だけ」を1本の流れ(プレイリスト)にして、
 //    画面を消しても止まらないよう、できている分を1つの音声につなげて <audio> で流す(記事の切れ目でアプリの処理がいらない)。
-//    ロック画面・イヤホンのボタンで 止める/次の記事/前の記事/10秒戻る ができる。
+//    ロック画面・イヤホンのボタンで 止める/次の記事/前の記事/5秒戻る・5秒進む ができる。
 //  - 質問は声(音声入力)か文字で。答えは画面に出して読み上げ、読み終えたら続きから流す。
 import { h, clear, stripMarkup } from './util.js';
 import { SB_URL } from './config.js';
@@ -115,8 +115,8 @@ function audio() {
     set('pause', () => a.pause());
     set('previoustrack', () => skip(-1));
     set('nexttrack', () => skip(1));
-    set('seekbackward', () => nudge(-10));
-    set('seekforward', () => nudge(10));
+    set('seekbackward', () => nudge(-5));
+    set('seekforward', () => nudge(5));
     set('seekto', (e) => { if (e.seekTime != null) a.currentTime = e.seekTime; });
   }
   return a;
@@ -507,9 +507,10 @@ function buildBar() {
       h('button', { class: 'pl-t', type: 'button', onclick: () => { const e = entryOf(P.cur); if (e) go('#/' + e.kind + '/' + e.date + '/' + e.n); } }, el.num, h('span', { class: 'pl-tx' }, el.title, el.sub)),
       h('button', { class: 'pl-x', type: 'button', 'aria-label': 'プレーヤーを閉じる', onclick: hideBar }, icon('x', 16))),
     h('div', { class: 'pl-ctl' },
-      btn('', '10秒戻る', 'back10', () => nudge(-10)),
       btn('', '前の記事', 'prev', () => skip(-1)),
+      btn('', '5秒戻る', 'back5', () => nudge(-5)),
       el.pp,
+      btn('', '5秒進む', 'fwd5', () => nudge(5)),
       btn('', '次の記事', 'next', () => skip(1)),
       el.speed,
       h('button', { class: 'pl-ask', type: 'button', onclick: () => openAsk() }, icon('ask', 20), '質問')));

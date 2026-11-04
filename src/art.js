@@ -30,6 +30,8 @@ Object.assign(I, {
   pause: '<path d="M8 5v14M16 5v14" stroke-width="3.200"/>',
   prev: '<path d="M6 5v14"/><path d="M18.500 5.500v13L9 12z" fill="currentColor"/>',
   next: '<path d="M18 5v14"/><path d="M5.500 5.500v13L15 12z" fill="currentColor"/>',
+  back5: '<path d="M4.500 12a7.500 7.500 0 1 0 2.200-5.300"/><path d="M4 3.500v4h4"/><text x="12" y="15.400" font-size="7.500" text-anchor="middle" fill="currentColor" stroke="none" font-family="DM Mono,monospace">5</text>',
+  fwd5: '<path d="M19.500 12a7.500 7.500 0 1 1-2.200-5.300"/><path d="M20 3.500v4h-4"/><text x="12" y="15.400" font-size="7.500" text-anchor="middle" fill="currentColor" stroke="none" font-family="DM Mono,monospace">5</text>',
   back10: '<path d="M4.500 12a7.500 7.500 0 1 0 2.200-5.300"/><path d="M4 3.500v4h4"/><text x="12" y="15.400" font-size="7.500" text-anchor="middle" fill="currentColor" stroke="none" font-family="DM Mono,monospace">10</text>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.500 11a6.500 6.500 0 0 0 13 0M12 17.500V21"/>',
   ask: '<circle cx="12" cy="12" r="8.500"/><path d="M9.600 9.500a2.500 2.500 0 1 1 3.400 2.300c-.7.300-1 .8-1 1.500v.4"/><circle cx="12" cy="16.800" r=".6" fill="currentColor"/>',

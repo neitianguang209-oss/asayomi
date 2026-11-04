@@ -32,7 +32,7 @@ function buildBar() {
   }
   bar.badge = h('span', { class: 'badge', hidden: true });
   el.append(h('div', { class: 'bar-in' }, seg, h('div', { class: 'bar-r' },
-    h('button', { class: 'ib', type: 'button', 'aria-label': '復習', onclick: () => go('#/review') }, icon('cards'), bar.badge),
+    h('button', { class: 'ib', type: 'button', 'aria-label': '振り返り', onclick: () => go('#/review') }, icon('cards'), bar.badge),
     h('button', { class: 'ib', type: 'button', 'aria-label': 'さがす', onclick: () => { presetSearch('all'); go('#/search'); } }, icon('search')),
     h('button', { class: 'ib', type: 'button', 'aria-label': 'きろく・設定', onclick: () => go('#/me') }, icon('me')))));
 }
@@ -47,9 +47,7 @@ function paintBar() {
     if (fresh && !dot) b.append(h('i', { 'aria-label': '未読あり' }));
     if (!fresh && dot) dot.remove();
   }
-  const due = store.dueCards().length;
-  bar.badge.hidden = !due;
-  bar.badge.textContent = due > 99 ? '99+' : String(due);
+  bar.badge.hidden = true; // 「たまっています」の数は出さない(振り返りはたまにでよい)
 }
 
 /* ---------- 一覧(下の層) ---------- */
