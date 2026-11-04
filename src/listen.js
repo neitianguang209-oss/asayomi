@@ -20,9 +20,9 @@ const AUDIO_CACHE = 'asayomi-audio';
 const LAME = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/lame.min.js';
 const OUT_RATE = 44100; // サーバーが置く mp3(Gemini の 44.1kHz・1ch・128kbps)と同じ形にそろえる
 const OUT_KBPS = 128;
-const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
-// 流す順はニュース → 雑学 → マナー。途中から聞きはじめたら、その先をつないで最後に頭へ戻る
-const ORDER = ['news', 'trivia', 'manner'];
+const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー', study: '学問' };
+// 流す順はニュース → 雑学 → マナー → 学問。途中から聞きはじめたら、その先をつないで最後に頭へ戻る
+const ORDER = ['news', 'trivia', 'manner', 'study'];
 const rest = (k) => { const i = ORDER.indexOf(k); return [...ORDER.slice(i + 1), ...ORDER.slice(0, i)]; };
 const keyOf = (kind, date, n) => kind + ':' + date + ':' + n;
 
@@ -578,7 +578,7 @@ export function openSetup(after) {
 
 /* ---------- 質問 ---------- */
 // ニュースは以前からの ask:n:…、雑学は ask:t:…(既読などと同じ頭文字)
-const askId = (kind, date, n) => 'ask:' + ({ trivia: 't', manner: 'm' }[kind] || 'n') + ':' + date + ':' + n + ':';
+const askId = (kind, date, n) => 'ask:' + ({ trivia: 't', manner: 'm', study: 's' }[kind] || 'n') + ':' + date + ':' + n + ':';
 export function asksOf(kind, date, n) {
   const out = [];
   store.st.each(askId(kind, date, n), (id, d) => { if (d && d.q) out.push(d); });

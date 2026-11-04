@@ -7,20 +7,20 @@ import { renderNews, newsArticle, flowPage } from './news.js';
 import { reviewPage } from './review.js';
 import { searchPage, presetSearch } from './search.js';
 import { mePage } from './me.js';
-import { renderManner } from './manner.js';
+import { renderManner, renderStudy } from './manner.js';
 import { showLayer, closeLayer, hasLayer, xButton } from './ui.js';
 import { icon } from './art.js';
 
 const viewEl = document.getElementById('view');
 const app = { mode: 'news', date: { trivia: null, news: null }, baseKey: '', ver: 0, dirty: false };
-try { const m = localStorage.getItem('asayomi:mode'); if (m === 'trivia' || m === 'manner') app.mode = m; } catch (e) { /* 既定のまま */ }
+try { const m = localStorage.getItem('asayomi:mode'); if (m === 'trivia' || m === 'manner' || m === 'study') app.mode = m; } catch (e) { /* 既定のまま */ }
 
 /* ---------- 上のバー ---------- */
 const bar = { seg: {}, badge: null };
 function buildBar() {
   const el = document.getElementById('bar');
-  const seg = h('div', { class: 'seg', role: 'tablist', 'aria-label': '雑学・ニュース・マナーの切り替え' });
-  for (const [mode, label] of [['news', 'ニュース'], ['trivia', '雑学'], ['manner', 'マナー']]) {
+  const seg = h('div', { class: 'seg', role: 'tablist', 'aria-label': 'ニュース・雑学・マナー・学問の切り替え' });
+  for (const [mode, label] of [['news', 'ニュース'], ['trivia', '雑学'], ['manner', 'マナー'], ['study', '学問']]) {
     const b = h('button', { type: 'button', role: 'tab' }, label);
     b.addEventListener('click', () => {
       if (app.mode === mode) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
@@ -37,7 +37,7 @@ function buildBar() {
     h('button', { class: 'ib', type: 'button', 'aria-label': 'きろく・設定', onclick: () => go('#/me') }, icon('me')))));
 }
 function paintBar() {
-  for (const mode of ['news', 'trivia', 'manner']) {
+  for (const mode of ['news', 'trivia', 'manner', 'study']) {
     const b = bar.seg[mode];
     b.setAttribute('aria-selected', String(app.mode === mode));
     // 開いていない方に、まだ1本も読んでいない最新分があれば赤い点
@@ -56,14 +56,14 @@ function paintBar() {
 let baseSeq = 0;
 async function renderBase() {
   const kind = app.mode;
-  if (kind === 'manner') { // マナー帳は日付で分けない
-    const key = 'manner||' + app.ver;
+  if (kind === 'manner' || kind === 'study') { // マナー帳・学問ノートは日付で分けない
+    const key = kind + '||' + app.ver;
     if (key === app.baseKey) return;
     ++baseSeq;
     app.baseKey = key;
     app.dirty = false;
     document.body.classList.remove('m-news');
-    renderManner(viewEl);
+    (kind === 'manner' ? renderManner : renderStudy)(viewEl);
     return;
   }
   const want = app.date[kind];
@@ -98,7 +98,7 @@ function parseHash() {
 function missingPage(kind, date) {
   return h('div', { class: 'page' }, h('div', { class: 'wrap' },
     h('div', { class: 'pbar' }, h('h1', null, '見つかりません'), xButton(() => back('#/' + kind))),
-    h('div', { class: 'empty' }, (isDate(date) ? jDate(date) + 'の' : 'リンク先の') + ({ trivia: '雑学', news: 'ニュース', manner: 'マナー' }[kind] || '記事') + 'が見つかりませんでした。', h('br'),
+    h('div', { class: 'empty' }, (isDate(date) ? jDate(date) + 'の' : 'リンク先の') + ({ trivia: '雑学', news: 'ニュース', manner: 'マナー', study: '学問' }[kind] || '記事') + 'が見つかりませんでした。', h('br'),
       '通信できる所でもう一度ひらくと出てくるかもしれません。')));
 }
 
@@ -108,15 +108,15 @@ async function route() {
   const p = parseHash();
   const head = p[0];
 
-  if (head === 'manner' && p[2] && isDate(p[1])) {
-    // マナーの記事(雑学と同じ形で出す)。下はマナー帳のまま
-    if (!app.baseKey) { app.mode = 'manner'; renderBase(); }
+  if ((head === 'manner' || head === 'study') && p[2] && isDate(p[1])) {
+    // マナー・学問の記事(雑学と同じ形で出す)。下は帳面のまま
+    if (!app.baseKey) { app.mode = head; renderBase(); }
     const n = parseInt(p[2], 10);
-    if (!store.item('manner', p[1], n)) await store.fetchDay('manner', p[1]);
-    await store.ensureArt('manner', p[1]);
+    if (!store.item(head, p[1], n)) await store.fetchDay(head, p[1]);
+    await store.ensureArt(head, p[1]);
     if (seq !== routeSeq) return;
-    const it = store.item('manner', p[1], n);
-    if (!it) { showLayer(missingPage('manner', p[1]), 'in-u'); paintBar(); return; }
+    const it = store.item(head, p[1], n);
+    if (!it) { showLayer(missingPage(head, p[1]), 'in-u'); paintBar(); return; }
     store.markRead(it);
     showLayer(triviaArticle(it), 'in-r');
     paintBar();
@@ -146,9 +146,9 @@ async function route() {
     return;
   }
 
-  if (head === 'manner') {
-    app.mode = 'manner';
-    try { localStorage.setItem('asayomi:mode', 'manner'); } catch (e) { /* 覚えられなくても動く */ }
+  if (head === 'manner' || head === 'study') {
+    app.mode = head;
+    try { localStorage.setItem('asayomi:mode', head); } catch (e) { /* 覚えられなくても動く */ }
     closeLayer();
     await renderBase();
     paintBar();
@@ -195,9 +195,9 @@ async function boot() {
   store.on('content', refreshBase);
   store.on('state', debounce(refreshBase, 200));
   setRouter(route);
-  if (!store.latest('trivia') && !store.latest('news') && !store.latest('manner')) {
+  if (!store.latest('trivia') && !store.latest('news') && !store.latest('manner') && !store.latest('study')) {
     // はじめて開いた端末: 最新の1日分だけ先に取ってすぐ出す(残りは裏で取り込む)
-    await Promise.all([store.quick('trivia'), store.quick('news'), store.quick('manner')]);
+    await Promise.all([store.quick('trivia'), store.quick('news'), store.quick('manner'), store.quick('study')]);
   }
   await route();
   refresh(true);

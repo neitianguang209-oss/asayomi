@@ -196,7 +196,7 @@ function fillPast(feed, curDate) {
 export function triviaArticle(it) {
   const d = it.data;
   const K = it.kind;
-  const name = K === 'manner' ? 'マナー' : '雑学';
+  const name = { manner: 'マナー', study: '学問' }[K] || '雑学';
   const items = store.itemsOf(K, it.date);
   const isLatest = it.date === store.latest(K);
   const art = h('article', { class: 'art' });
@@ -239,6 +239,6 @@ export function triviaArticle(it) {
   const crumb = (isLatest ? '今日の' + name + ' ' : jDate(it.date) + 'の' + name + ' ') + it.n + '/' + items.length + (d.keyword ? '　' + d.keyword : '');
   return h('div', { class: 'tv' },
     h('div', { class: 'wrap' },
-      h('div', { class: 'abar' }, h('div', { class: 'crumb' }, crumb), xButton(() => back(K === 'manner' ? '#/manner' : '#/trivia/' + it.date), '一覧に戻る')),
+      h('div', { class: 'abar' }, h('div', { class: 'crumb' }, crumb), xButton(() => back(K === 'manner' || K === 'study' ? '#/' + K : '#/trivia/' + it.date), '一覧に戻る')),
       art));
 }

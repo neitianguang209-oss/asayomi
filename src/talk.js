@@ -11,9 +11,9 @@ import { openSheet, toast } from './ui.js';
 import { pauseListening, listenBoth } from './listen.js';
 
 const FN = SB_URL + '/functions/v1/asayomi-voice';
-const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
-// 続けるときの順はニュース → 雑学 → マナー(まとめて聞くと同じ)
-const ORDER = ['news', 'trivia', 'manner'];
+const NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー', study: '学問' };
+// 続けるときの順はニュース → 雑学 → マナー → 学問(まとめて聞くと同じ)
+const ORDER = ['news', 'trivia', 'manner', 'study'];
 const rest = (k) => { const i = ORDER.indexOf(k); return [...ORDER.slice(i + 1), ...ORDER.slice(0, i)]; };
 const md = (date) => Number(date.slice(5, 7)) + '月' + Number(date.slice(8, 10)) + '日';
 const plain = (s) => stripMarkup(s || '').trim();
@@ -73,10 +73,11 @@ function howTo(parts, n) {
   parts.forEach((p, i) => {
     const head = i === 0 ? 'まず' : 'それが終わったら「次は' + NAME[p.kind] + 'です」と言って、';
     if (p.kind === 'news') say.push(head + 'ニュース' + p.items.length + '本を1本ずつ、ニュースキャスターのように1本1分くらいで話して、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
+    else if (p.kind === 'study') say.push(head + '学問' + p.items.length + '本を1本ずつ、前提知識がない人にもわかるように1本1分くらいで話して、身近なたとえを1つ添え、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
     else if (p.kind === 'manner') say.push(head + 'マナー' + p.items.length + '本を1本ずつ、やさしく教えるように1本40秒くらいで話して、なぜそうするのかの由来も添え、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
     else say.push(head + '雑学' + p.items.length + '本を1本ずつ、友だちに話すように1本40秒くらいで話して、最後に「会話で使える一言」を添え、1本ごとに「質問ある？それとも次へ？」と聞いてください。');
   });
-  if (parts.some((p) => p.kind !== 'news')) say.push('最後まで話し終えたら「クイズやる？」と聞いて、やるなら雑学・マナーの記事にあるクイズを1問ずつ出してください。');
+  if (parts.some((p) => p.kind !== 'news')) say.push('最後まで話し終えたら「クイズやる？」と聞いて、やるなら雑学・マナー・学問の記事にあるクイズを1問ずつ出してください。');
   say.push('わからない言葉を聞いたら、記事をふまえて短く答えてください。「次」と言われたら次へ、「飛ばして」と言われたら次の話へ進んでください。');
   return say.join('');
 }

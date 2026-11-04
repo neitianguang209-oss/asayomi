@@ -213,9 +213,9 @@ function articleText(d: any) {
   for (const t of d.terms || []) if (Array.isArray(t) && t[0]) out.push('用語「' + clean(t[0]) + '」: ' + clean(t[1]));
   return out.join('\n');
 }
-type Kind = 'news' | 'trivia' | 'manner';
-const KNAME: Record<Kind, string> = { news: 'ニュース', trivia: '雑学', manner: 'マナー' };
-const kindOf = (k: unknown): Kind => (k === 'trivia' || k === 'manner' ? k : 'news'); // 前の版の端末は kind を送らない(=ニュース)
+type Kind = 'news' | 'trivia' | 'manner' | 'study';
+const KNAME: Record<Kind, string> = { news: 'ニュース', trivia: '雑学', manner: 'マナー', study: '学問' };
+const kindOf = (k: unknown): Kind => (k === 'trivia' || k === 'manner' || k === 'study' ? k : 'news'); // 前の版の端末は kind を送らない(=ニュース)
 async function itemOf(kind: Kind, date: string, n: number) {
   const { data } = await db.from('asayomi_items').select('data').eq('kind', kind).eq('date', date).eq('n', n).maybeSingle();
   return data?.data ?? null;
@@ -394,7 +394,7 @@ async function makeYomi(key: string, models: string[], kind: Kind, date: string,
     return [];
   }
 }
-const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り', manner: 'やさしく丁寧に教える、落ち着いた語り' };
+const STYLE = { news: '落ち着いて聞き取りやすい、ニュースの読み上げ', trivia: '友だちに話すような、明るく楽しい語り', manner: 'やさしく丁寧に教える、落ち着いた語り', study: '知的好奇心をくすぐる、わかりやすい講義のような語り' };
 type Made = { url: string; dur: number } | { pcm: string; rate: number; model: string } | { busy: true } | { error: string; code: string; status: number };
 // 1本ぶんを作る。mp3 でもらえたらその場で置いて URL を返す。生の音しかもらえなければそれを返す(端末が mp3 にする)
 async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boolean; mp3Only?: boolean } = {}): Promise<Made> {
@@ -557,7 +557,7 @@ Deno.serve(async (req) => {
         if (hold && Date.now() < Number(hold)) return json({ idle: 'hold' });
         const order: { kind: Kind; date: string; n: number }[] = [];
         const per: { kind: Kind; date: string; ns: number[] }[] = [];
-        for (const kind of ['news', 'trivia', 'manner'] as Kind[]) {
+        for (const kind of ['news', 'trivia', 'manner', 'study'] as Kind[]) {
           const { data: day } = await db.from('asayomi_days').select('date').eq('kind', kind).order('date', { ascending: false }).limit(1).maybeSingle();
           if (!day?.date || day.date < todayJST()) continue; // 今日の分がまだ届いていない
           const { data: its } = await db.from('asayomi_items').select('n').eq('kind', kind).eq('date', day.date).order('n');

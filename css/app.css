@@ -37,7 +37,7 @@ strong{font-weight:900}
 .ib{width:42px;height:42px;border-radius:50%;border:0;background:none;display:grid;place-items:center;cursor:pointer;position:relative;color:var(--ink)}
 .ib:active{background:#eef0f3}
 .ib .badge{position:absolute;top:3px;right:0;min-width:18px;height:18px;border-radius:9px;background:var(--red);color:#fff;font:500 11px/18px var(--f-mono);text-align:center;padding:0 5px;box-shadow:0 0 0 2px #fff}
-@media (max-width:400px){.seg button{width:64px;font-size:13.5px}}@media (max-width:350px){.seg button{width:56px;font-size:13px}.ib{width:36px}}
+@media (max-width:400px){.seg button{width:56px;font-size:13px}.ib{width:36px}}@media (max-width:350px){.seg button{width:50px;font-size:12px}.ib{width:34px}}
 #view{min-height:calc(100vh - var(--bar-total))}
 .wrap{max-width:560px;margin:0 auto;padding-inline:16px}
 .boot{padding:80px 24px;text-align:center;color:var(--sub);font-size:14px}

@@ -325,7 +325,7 @@ export function searchIndex() {
       }
       return a.filter(Boolean).join(' ');
     };
-    for (const kind of ['trivia', 'news', 'manner']) {
+    for (const kind of ['trivia', 'news', 'manner', 'study']) {
       for (const it of allItems(kind)) {
         const d = it.data;
         const head = [d.title, d.keyword, d.gist, d.thread].filter(Boolean).join(' ');
@@ -439,8 +439,8 @@ async function doSyncState(opts) {
 }
 
 /* ---------- 記録の読み書き(画面から使う形) ---------- */
-const K = { trivia: 't', news: 'n', manner: 'm' };
-const KIND = { t: 'trivia', n: 'news', m: 'manner' };
+const K = { trivia: 't', news: 'n', manner: 'm', study: 's' };
+const KIND = { t: 'trivia', n: 'news', m: 'manner', s: 'study' };
 const rid = (prefix, it) => prefix + ':' + K[it.kind] + ':' + it.date + ':' + it.n;
 export function pref() { return Object.assign({ autoReview: true, quizSize: 10 }, st.get('pref') || {}); }
 export function setPref(patch) { st.set('pref', Object.assign(pref(), patch)); }
@@ -510,7 +510,7 @@ export function sentId(it) { return rid('sent', it); }
 export function todoId(it) { return rid('todo', it); }
 
 /* ---------- 復習カード ---------- */
-export function cardIdOf(it) { return 'card:' + (it.kind === 'manner' ? 'm' : 't') + ':' + it.date + ':' + it.n; }
+export function cardIdOf(it) { return 'card:' + (it.kind === 'manner' ? 'm' : it.kind === 'study' ? 's' : 't') + ':' + it.date + ':' + it.n; }
 export function cardIdTerm(term) { return 'card:w:' + norm(term); }
 export function addCard(id) {
   if (st.has(id)) return false;
@@ -520,9 +520,9 @@ export function addCard(id) {
 export function removeCard(id) { st.del(id); }
 // カードが指している雑学・用語(まだ中身が届いていなければ null)
 export function cardTarget(id) {
-  if (id.indexOf('card:t:') === 0 || id.indexOf('card:m:') === 0) {
+  if (/^card:[tms]:/.test(id)) {
     const p = id.split(':');
-    const it = item(p[1] === 'm' ? 'manner' : 'trivia', p[2], +p[3]);
+    const it = item(KIND[p[1]], p[2], +p[3]);
     return it ? { type: 't', it } : null;
   }
   if (id.indexOf('card:w:') === 0) {

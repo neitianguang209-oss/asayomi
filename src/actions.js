@@ -31,7 +31,7 @@ function memoOf(it) {
     const line = d.legacy ? d.title : d.gist || d.title;
     return { seed: 'trivia-' + it.date + '-' + (it.n - 1), body: line + '\n\n詳しく：' + linkOf(it) };
   }
-  if (it.kind === 'manner') return { seed: 'manner-' + it.date + '-' + it.n, body: (d.gist || d.title) + '\n\n詳しく：' + linkOf(it) };
+  if (it.kind === 'manner' || it.kind === 'study') return { seed: it.kind + '-' + it.date + '-' + it.n, body: (d.gist || d.title) + '\n\n詳しく：' + linkOf(it) };
   const line = d.gist || (d.title + '\n' + store.briefOf(it));
   return { seed: 'news-' + it.date + '-' + it.n, body: line + '\n\n詳しく：' + linkOf(it) };
 }
