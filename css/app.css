@@ -573,6 +573,7 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .lwrap{display:flex;flex-direction:column;gap:6px}
 .lchip{align-self:flex-start;border:1px solid var(--line);background:#fff;border-radius:999px;padding:5px 12px;font-size:12.5px;font-weight:700;color:var(--sub);cursor:pointer}
 .lchip[aria-checked="true"]{color:var(--ink);border-color:#cfd3d9;background:#f6f7f9}
+.lchip.lres{color:#fff;background:var(--ink);border-color:var(--ink);font-size:13.5px;padding:7px 14px}
 .pl.tv .pl-t>b{background:#14743c}
 .pl-t>b{white-space:nowrap}
 .tv .asklog{margin-top:26px;background:#f3f8f4;border-radius:14px;padding:14px 16px 8px}

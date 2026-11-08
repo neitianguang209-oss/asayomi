@@ -51,6 +51,12 @@ async function count(action: keyof typeof CAP): Promise<boolean> {
   await db.from('asayomi_voice_log').upsert({ day, action, cnt });
   return true;
 }
+// 声づくりは「できた分」だけ数える。前は無料枠切れで失敗した試みまで数えていて、
+// 毎朝の先回りが何度も試すうちに上限(40)に届き、最後に作る学問の分が作れずに残っていた
+async function underCap(action: keyof typeof CAP): Promise<boolean> {
+  const { data } = await db.from('asayomi_voice_log').select('cnt').eq('day', todayJST()).eq('action', action).maybeSingle();
+  return (data?.cnt ?? 0) < CAP[action];
+}
 
 /* ---------- モデル選び(入れ替わるので週1回は一覧を取り直す) ---------- */
 function orderTts(names: string[]) {
@@ -405,16 +411,18 @@ async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boole
   if (!d) return { error: 'no item', code: 'none', status: 404 };
   const key = await getSecret('gemini_key');
   if (!key) return { error: 'キーが未登録です', code: 'nokey', status: 400 };
-  if (!(await count('tts'))) return { error: '今日の読み上げの回数の上限です', code: 'cap', status: 429 };
+  if (!(await underCap('tts'))) return { error: '今日の読み上げの回数の上限です', code: 'cap', status: 429 };
   await db.from('asayomi_audio').upsert({ kind, date, n, claimed_at: new Date().toISOString() });
   const release = () => db.from('asayomi_audio').update({ claimed_at: null }).eq('kind', kind).eq('date', date).eq('n', n).is('path', null);
   const models = await modelsFor(key);
   if (!Array.isArray(d.yomi)) d.yomi = await makeYomi(key, models.text, kind, date, n, d);
-  const r = await synth(key, models.tts, speechOf(kind, date, d, n, n === 1 ? await countOf(kind, date) : 0), STYLE[kind], opt.mp3Only);
+  const speech = speechOf(kind, date, d, n, n === 1 ? await countOf(kind, date) : 0);
+  const r = await synth(key, models.tts, speech, STYLE[kind], opt.mp3Only);
   if (!r.ok) {
     await release();
     return { error: r.code === 'quota' ? 'Gemini の無料枠を使い切りました' : r.code === 'key' ? 'キーが使えなくなりました' : '声を作れませんでした', code: r.code, status: r.code === 'quota' ? 429 : 502 };
   }
+  await count('tts');
   await setSecret('last_ok', JSON.stringify({ at: new Date().toISOString(), where: 'tts', model: r.model }));
   await db.from('asayomi_secret').delete().eq('k', 'last_error'); // うまくいったので、前のエラーの表示は消す
   if (!r.mp3) {
@@ -429,7 +437,46 @@ async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boole
     await logErr('tts', 'unexpected mp3 ' + JSON.stringify(info));
     return { error: '声を作れませんでした', code: 'ai', status: 502 };
   }
+  // 読み上げが途中で切れていないか(ふつうは1秒に6〜9字ほど。速すぎれば、終わりまで読まずに切れている)。記録だけ残す
+  const cps = speech.length / Math.max(1, info.dur);
+  if (cps > 13) await setSecret('short_audio', JSON.stringify({ at: new Date().toISOString(), kind, date, n, chars: speech.length, dur: info.dur, model: r.model })).catch(() => {});
   return { url: await store(kind, date, n, bytes, info.dur, r.model), dur: info.dur };
+}
+
+/* ---------- 切りかえの一言 ---------- */
+// 続けて聞くとき、種類が変わる所(ニュース→雑学など)に入れる短い声。日付を言わないので一度作れば使い回せる。
+// 毎朝の先回りが、その日の分を作り終えて手が空いたときに1つずつ作る(足りない間は一言なしでつなぐ)
+const BRIDGE_TEXT: Record<Kind, string> = {
+  news: 'さて、ここからはニュースをお伝えします。',
+  trivia: 'ここでひと息。続いては、雑学の時間です。',
+  manner: '続いては、知っておくと安心な、マナーのお話です。',
+  study: '続いては、少しじっくり、学問のお話です。',
+};
+const BRIDGE_VER = 'v1';
+type Bridges = Partial<Record<Kind, { path: string; dur: number; ver: string }>>;
+async function bridges(): Promise<Bridges> {
+  try { return JSON.parse((await getSecret('bridges')) || '{}'); } catch { return {}; }
+}
+async function makeBridge(key: string): Promise<{ made?: Kind; error?: string; code?: string } | null> {
+  const have = await bridges();
+  const kind = (Object.keys(BRIDGE_TEXT) as Kind[]).find((k) => have[k]?.ver !== BRIDGE_VER);
+  if (!kind) return null;
+  if (!(await underCap('tts'))) return { error: 'cap', code: 'cap' };
+  const models = await modelsFor(key);
+  const r = await synth(key, models.tts, BRIDGE_TEXT[kind], STYLE[kind], true);
+  if (!r.ok) return { error: r.msg, code: r.code };
+  await count('tts');
+  const bytes = stripId3(Uint8Array.from(atob(r.b64), (c) => c.charCodeAt(0)));
+  const info = mp3Info(bytes);
+  if (!r.mp3 || !info.frames || info.rate !== 44100 || !info.mono) return { error: 'unexpected mp3', code: 'ai' };
+  const path = 'bridge/' + kind + '-' + BRIDGE_VER + '-' + crypto.randomUUID().slice(0, 8) + '.mp3';
+  const up = await db.storage.from(BUCKET).upload(path, bytes, { contentType: 'audio/mpeg', cacheControl: '31536000' });
+  if (up.error) return { error: up.error.message, code: 'ai' };
+  const old = have[kind]?.path;
+  have[kind] = { path, dur: info.dur, ver: BRIDGE_VER };
+  await setSecret('bridges', JSON.stringify(have));
+  if (old) await db.storage.from(BUCKET).remove([old]).catch(() => {});
+  return { made: kind };
 }
 
 const ASK_SYSTEM = [
@@ -507,6 +554,14 @@ Deno.serve(async (req) => {
         });
       }
 
+      // 切りかえの一言の置き場所 { items: { news: { url, dur }, ... } }(できているものだけ)
+      case 'bridges': {
+        const have = await bridges();
+        const items: Record<string, { url: string; dur: number }> = {};
+        for (const [k, x] of Object.entries(have)) if (x?.path && x.ver === BRIDGE_VER) items[k] = { url: db.storage.from(BUCKET).getPublicUrl(x.path).data.publicUrl, dur: x.dur };
+        return json({ items });
+      }
+
       // キーを登録する(使えるか確かめてから)
       case 'set-key': {
         const key = String(body.key ?? '').trim();
@@ -571,7 +626,12 @@ Deno.serve(async (req) => {
           const r: any = st.get(o.kind + o.date + o.n);
           return !r?.path && !(r?.claimed_at && Date.now() - Date.parse(r.claimed_at) < 4 * 60e3);
         });
-        if (!next) return json({ idle: 'done', total: order.length });
+        if (!next) {
+          // その日の分は作り終えた: 手が空いたので、切りかえの一言でまだ無いものを1つ作る
+          const b = await makeBridge((await getSecret('gemini_key'))!);
+          if (b?.code === 'quota' || b?.code === 'ai') await setSecret('pregen_hold', String(Date.now() + (b.code === 'quota' ? 20 : 3) * 60e3));
+          return json({ idle: 'done', total: order.length, bridge: b });
+        }
         const r = await makeOne(next.kind, next.date, next.n, { mp3Only: true });
         if ('status' in r) {
           if (r.code === 'quota' || r.code === 'ai') await setSecret('pregen_hold', String(Date.now() + (r.code === 'quota' ? 20 : 3) * 60e3));

@@ -93,18 +93,28 @@ function audio() {
     a.defaultPlaybackRate = a.playbackRate = speed();
     const pd = P.pending;
     P.pending = null;
-    if (pd) { seekTo(pd.key, pd.at); if (pd.play) a.play().catch(() => {}); }
+    if (pd) {
+      seekTo(pd.key, pd.at);
+      // 端末によっては読み込み直後の位置合わせが効かず、頭から流れてしまう(同じ記事を2回聞くことになる)。流れ出してから確かめ直す
+      P.goal = a.currentTime; P.goalTries = 0;
+      if (pd.play) a.play().catch(() => {});
+    }
   });
   a.addEventListener('timeupdate', tick);
-  a.addEventListener('play', () => { P.ended = false; paint(); setPosition(); });
-  a.addEventListener('pause', () => { paint(); setPosition(); });
+  a.addEventListener('play', () => { P.ended = false; changed(); setPosition(); });
+  a.addEventListener('pause', () => { remember(true); changed(); setPosition(); });
   a.addEventListener('ratechange', setPosition);
   a.addEventListener('ended', () => {
     if (!a.src.startsWith('blob:')) return;
     const last = P.segs[P.segs.length - 1];
-    // まだ作っている途中の記事があれば、できた所で続きを流す
-    if (last && P.prep && last.key !== P.list[P.list.length - 1].key) P.waitAfter = last.key;
-    else P.ended = true;
+    // まだ届いていない・つないでいない記事があれば、そろった所で続きを流す
+    if (last && (P.prep || P.dirty) && last.key !== P.list[P.list.length - 1].key) {
+      P.waitAfter = last.key;
+      if (P.dirty) rebuild();
+    } else {
+      P.ended = true;
+      if (last && last.key === P.list[P.list.length - 1].key) forgetLast(); // 最後まで聞いた: 「続きから」は出さない
+    }
     paint();
   });
   P.audio = a;
@@ -131,9 +141,10 @@ function where() {
   for (const s of P.segs) if (s.start <= t + 0.05) seg = s;
   return { key: seg.key, kind: seg.kind, date: seg.date, n: seg.n, at: Math.max(0, t - seg.start), dur: seg.dur };
 }
+// at が負なら、その記事の前の「切りかえの一言」から
 function seekTo(key, at) {
   const seg = P.segs.find((s) => s.key === key);
-  if (seg) { P.audio.currentTime = (seg.start + (at || 0)) * (P.scale || 1); P.ended = false; }
+  if (seg) { P.audio.currentTime = Math.max(0, seg.start + Math.max(-(seg.pre || 0), at || 0)) * (P.scale || 1); P.ended = false; }
 }
 function skip(dir) {
   const pos = where();
@@ -147,9 +158,19 @@ function nudge(sec) {
   if (a) a.currentTime = Math.max(0, Math.min((a.duration || 0) - 0.3, a.currentTime + sec));
 }
 function tick() {
+  const a = P.audio;
+  // 読み込み直しの途中(位置合わせ前)は、頭の位置を「いま」と取り違えないよう何もしない
+  if (P.pending || !a.src.startsWith('blob:')) return;
+  if (P.goal != null) {
+    if (Math.abs(a.currentTime - P.goal) > 2 && P.goalTries++ < 3) { a.currentTime = P.goal; return; }
+    P.goal = null;
+  }
   const pos = where();
   if (!pos) return;
   if (pos.key !== P.cur) { P.cur = pos.key; setMeta(); changed(); }
+  // 届いたのにまだつないでいない記事がある: 今の分が残り少なくなったらつなぐ(聞いている最中に何度も読み込み直さない)
+  if (P.dirty && (!isFinite(a.duration) || a.duration - a.currentTime < 90)) rebuild();
+  remember(false);
   // 7割まで聞いたら「読んだ」にする
   if (!P.heard.has(pos.key) && pos.at > pos.dur * 0.7) {
     P.heard.add(pos.key);
@@ -182,30 +203,113 @@ function setPosition() {
   } catch (e) { /* 古い端末 */ }
 }
 
+/* ---------- どこまで聞いたか(この端末に残す) ---------- */
+// last: 最後に聞いていた所 { key, at, t }。map: 記事ごとの途中の位置(秒)。途中で切れても、次はそこから聞ける
+const POS = 'asayomi:listenPos';
+function loadPos() {
+  try { const v = JSON.parse(localStorage.getItem(POS) || 'null'); if (v && typeof v === 'object') return { last: v.last || null, map: v.map || {} }; } catch (e) { /* 読めない */ }
+  return { last: null, map: {} };
+}
+function savePos(v) { try { localStorage.setItem(POS, JSON.stringify(v)); } catch (e) { /* 残せなくても流せる */ } }
+let savedAt = 0;
+function remember(now) {
+  const a = P.audio;
+  if (!a || P.pending || !a.src.startsWith('blob:')) return;
+  if (!now && Date.now() - savedAt < 5000) return;
+  const pos = where();
+  if (!pos) return;
+  savedAt = Date.now();
+  const v = loadPos();
+  const at = Math.min(pos.at, pos.dur);
+  if (at > pos.dur - 6) delete v.map[pos.key]; // ほぼ聞き終えた記事は、途中の位置を消す
+  else if (at > 3) v.map[pos.key] = Math.round(at);
+  const keys = Object.keys(v.map);
+  if (keys.length > 40) for (const k of keys.slice(0, keys.length - 40)) delete v.map[k];
+  v.last = { key: pos.key, at: Math.round(at), t: Date.now() };
+  savePos(v);
+}
+function forgetLast() { const v = loadPos(); v.last = null; savePos(v); }
+const fmtAt = (s) => Math.floor(s / 60) + ':' + String(Math.round(s) % 60).padStart(2, '0');
+// この流れの中で、途中まで聞いていた所(3日以内)。なければ null
+function resumeOf(gs) {
+  const { last } = loadPos();
+  if (!last || Date.now() - last.t > 3 * 864e5) return null;
+  const [kind, date, n] = last.key.split(':');
+  if (!gs.some((g) => g.kind === kind && g.date === date)) return null;
+  const items = store.itemsOf(kind, date);
+  if (!items.some((it) => it.n === Number(n))) return null;
+  const first = gs[0];
+  if (last.key === keyOf(first.kind, first.date, Math.min(...store.itemsOf(first.kind, first.date).map((it) => it.n))) && last.at < 5) return null;
+  return { kind, date, n: Number(n), at: last.at };
+}
+
 /* ---------- つなぐ ---------- */
+// 切りかえの一言(「続いては、学問のお話です」など)。種類が変わる所の前に入れる。サーバーに無ければ入れない
+const BRIDGE = new Map(); // kind → { buf, dur }
+let bridgesAsked = 0;
+async function loadBridges() {
+  if (Date.now() - bridgesAsked < 10 * 60e3 || BRIDGE.size === ORDER.length) return;
+  bridgesAsked = Date.now();
+  const r = await call('bridges', {}, 15000);
+  for (const [k, x] of Object.entries(r.items || {})) {
+    if (BRIDGE.has(k) || !x || !x.url) continue;
+    try { BRIDGE.set(k, { buf: await fetchMp3(x.url), dur: x.dur }); } catch (e) { /* 一言なしでも流せる */ }
+  }
+}
+// 聞いている最中は、届いた分をすぐにはつながない(つなぐたびに読み込み直すので)。
+// 再生していない・待っている・今の分が残り少ない、のどれかのときだけつなぐ。あとは tick が残り90秒でつなぐ
+function soft() {
+  const a = P.audio;
+  const loaded = a && a.src.startsWith('blob:');
+  if (!loaded || a.paused || P.waitAfter || (P.pending && P.pending.wait)) { rebuild(); return; }
+  if (!isFinite(a.duration) || a.duration - a.currentTime < 90) rebuild(); else P.dirty = true;
+}
 function rebuild() {
-  const order = P.list.filter((e) => P.parts.has(e.key));
-  const built = order.map((e) => e.key).join(',');
+  P.dirty = false;
+  // 流す順に並べる。まだ届くかもしれない記事(用意の途中)の先はつながない: 抜けたまま次の種類へ飛ぶと、
+  // 飛ばした記事が「もう通り過ぎた所」に入ってしまい、最後まで流れなくなる
+  const anchor = (P.pending && P.pending.key) || P.cur;
+  const ai = Math.max(0, P.list.findIndex((e) => e.key === anchor));
+  const order = [];
+  for (let i = 0; i < P.list.length; i++) {
+    const e = P.list[i];
+    if (P.parts.has(e.key)) order.push(e);
+    else if (i > ai && P.prep) break;
+  }
+  const bufs = [];
+  const segs = [];
+  let t = 0;
+  for (const e of order) {
+    const prev = segs[segs.length - 1];
+    const br = prev && prev.kind !== e.kind ? BRIDGE.get(e.kind) : null;
+    if (br) { bufs.push(br.buf); t += br.dur; }
+    const p = P.parts.get(e.key);
+    bufs.push(p.buf);
+    segs.push(Object.assign({ start: t, dur: p.dur, pre: br ? br.dur : 0 }, e));
+    t += p.dur;
+  }
+  const built = segs.map((s) => (s.pre ? '+' : '') + s.key).join(',');
   if (!order.length || built === P.built) return;
   const a = audio();
   const loaded = a.src.startsWith('blob:');
-  const pos = loaded ? where() : null;
-  const playing = loaded && !a.paused;
-  P.segs = [];
-  let t = 0;
-  for (const e of order) { const p = P.parts.get(e.key); P.segs.push(Object.assign({ start: t, dur: p.dur }, e)); t += p.dur; }
+  // 読み込み直しの途中(まだ位置合わせしていない)なら、そのとき決めた位置を引き継ぐ。
+  // ここで今の位置を読むと 0 秒(=頭)になり、同じ記事を頭から2回流してしまう
+  const held = P.pending && !P.pending.wait ? P.pending : null;
+  const pos = held ? { key: held.key, at: held.at } : loaded ? where() : null;
+  const playing = held ? held.play : loaded && !a.paused;
+  P.segs = segs;
   P.total = t;
   P.built = built;
   const old = P.url;
-  P.url = URL.createObjectURL(new Blob(order.map((e) => P.parts.get(e.key).buf), { type: 'audio/mpeg' }));
+  P.url = URL.createObjectURL(new Blob(bufs, { type: 'audio/mpeg' }));
   if (P.waitAfter) {
-    // 最後まで聞き終えて待っていた: できた次の記事から流す
-    const i = order.findIndex((e) => e.key === P.waitAfter);
-    const nx = order[i + 1];
-    if (nx) { P.pending = { key: nx.key, at: 0, play: true }; P.waitAfter = null; a.src = P.url; }
+    // 最後まで聞き終えて待っていた: できた次の記事から流す(種類が変わるなら切りかえの一言から)
+    const i = segs.findIndex((s) => s.key === P.waitAfter);
+    const nx = segs[i + 1];
+    if (nx) { P.pending = { key: nx.key, at: -nx.pre, play: true }; P.waitAfter = null; a.src = P.url; }
   } else if (P.pending && P.pending.wait) {
     // 押した記事の声ができるのを待っていた
-    if (P.segs.some((s) => s.key === P.pending.key)) { P.pending.wait = false; a.src = P.url; }
+    if (segs.some((s) => s.key === P.pending.key)) { P.pending.wait = false; a.src = P.url; }
   } else if (loaded) {
     P.pending = pos ? { key: pos.key, at: pos.at, play: playing } : null;
     a.src = P.url;
@@ -319,7 +423,7 @@ function setFlow(gs) {
       P.list.push({ key: keyOf(g.kind, g.date, it.n), kind: g.kind, date: g.date, n: it.n });
     }
   }
-  P.segs = []; P.total = 0; P.built = ''; P.scale = 1;
+  P.segs = []; P.total = 0; P.built = ''; P.scale = 1; P.dirty = false; P.goal = null;
   P.error = ''; P.progress = ''; P.stopped = false; P.waitAfter = null; P.pending = null; P.make = false; P.ended = false;
   P.cur = P.list.length ? P.list[0].key : null;
 }
@@ -336,12 +440,15 @@ export function prepare(gs, make) {
   }
   // ぜんぶ声がそろっていれば、聞きに行くまでもない(一覧を描き直すたびに通信しないように)。
   // 見ているだけのときも、1分以内に確かめたばかりなら聞きに行かない
+  if (P.groups.length > 1) { const sig = P.sig; loadBridges().then(() => { if (P.sig === sig) soft(); }); }
   if (!P.prep && P.list.length && P.list.every((e) => P.parts.has(e.key))) return Promise.resolve();
   if (!P.prep && !P.make && P.checked === P.sig && Date.now() - P.checkedAt < 60e3) return Promise.resolve();
   if (!P.prep) {
     const sig = P.sig;
     P.prep = runPrepare(sig).finally(() => {
       P.prep = null;
+      // 用意が終わった: 作れなかった記事があれば、それを飛ばして残りをつなぐ
+      if (P.sig === sig) soft();
       // 途中で「作ってよい」になった・流れが変わった: いまの流れでもう一度
       if (P.again || P.sig !== sig) { P.again = false; prepare(P.groups, P.make); }
       changed();
@@ -371,7 +478,7 @@ async function runPrepare(sig) {
     for (const e of order) {
       const x = byKey.get(e.key);
       if (x && x.url && !P.parts.has(e.key) && (P.make || firsts.has(e.key))) {
-        try { P.parts.set(e.key, { buf: await fetchMp3(x.url), dur: x.dur }); if (alive()) rebuild(); } catch (err) { /* 次の回で取り直す */ }
+        try { P.parts.set(e.key, { buf: await fetchMp3(x.url), dur: x.dur }); if (alive()) soft(); } catch (err) { /* 次の回で取り直す */ }
       }
       if (!alive()) return;
     }
@@ -390,7 +497,7 @@ async function runPrepare(sig) {
       // サーバーが作って置いた: 取ってきて流れに足す(途中で流れが変わっても、作った声はサーバーに残っている)
       if (r.url) {
         P.avail.add(e.key); P.durs.set(e.key, r.dur);
-        try { P.parts.set(e.key, { buf: await fetchMp3(r.url), dur: r.dur }); if (alive()) rebuild(); } catch (err) { waiting = true; }
+        try { P.parts.set(e.key, { buf: await fetchMp3(r.url), dur: r.dur }); if (alive()) soft(); } catch (err) { waiting = true; }
         if (!alive()) return;
         continue;
       }
@@ -406,7 +513,7 @@ async function runPrepare(sig) {
       try {
         const mp3 = await toMp3(r.pcm, r.rate || OUT_RATE);
         P.parts.set(e.key, { buf: await mp3.blob.arrayBuffer(), dur: mp3.dur });
-        if (alive()) rebuild();
+        if (alive()) soft();
         const put = await call('put', { kind: e.kind, date: e.date, n: e.n, dur: mp3.dur, model: r.model, mp3: await b64Of(mp3.blob) }, 60000);
         if (put.url) {
           P.avail.add(e.key); P.durs.set(e.key, mp3.dur);
@@ -443,21 +550,24 @@ function silentUrl() {
 }
 
 // kind の date の n 本目から流す(n が無ければ最初から)。続けてもう一方も流すかは設定どおり(ボタンを押したその場で呼ぶこと)
-export function listen(kind, date, n) {
+// at を渡すと、その記事の at 秒目から(途中で切れた所の続き)
+export function listen(kind, date, n, at) {
   const a = audio();
   const gs = groupsFor(kind, date, listenBoth());
   if (!gs.length) { toast('聞ける記事がありません'); return; }
   if (sigOf(gs) !== P.sig) { if (!a.paused) a.pause(); setFlow(gs); }
   const key = n ? keyOf(kind, date, n) : P.list[0].key;
+  at = at > 0 ? Math.max(0, at - 3) : 0; // 続きからは、切れた所の少し前から
   P.cur = key;
+  P.waitAfter = null; P.ended = false;
   showBar();
   setMeta();
   if (P.segs.some((s) => s.key === key) && P.url) {
-    if (a.src === P.url) { seekTo(key, 0); a.play().catch(() => {}); }
-    else { P.pending = { key, at: 0, play: true }; a.src = P.url; a.play().catch(() => {}); }
+    if (a.src === P.url && !P.pending) { seekTo(key, at); a.play().catch(() => {}); }
+    else { P.pending = { key, at, play: true }; a.src = P.url; a.play().catch(() => {}); }
   } else {
     // まだ声ができていない: 無音を流して許可だけ取り、できたら流す
-    P.pending = { key, at: 0, play: true, wait: true };
+    P.pending = { key, at, play: true, wait: true };
     a.src = silentUrl();
     a.play().catch(() => {});
   }
@@ -760,13 +870,28 @@ export function listenCard(kind, date) {
     if (mine && P.ready === false) t = 'はじめに Gemini のキーを1回だけ登録します';
     sub.textContent = t;
   };
-  const off = onListen(() => { if (!card.isConnected) { off(); return; } paintCard(); });
+  // 途中で止まった・切れたときは「続きから」を出す(いま流している間は出さない)
+  const resume = h('button', { class: 'lchip lres', type: 'button', hidden: true });
+  const paintResume = () => {
+    const gs = groupsFor(kind, date, listenBoth());
+    const r = playingNow() && P.sig === sigOf(gs) ? null : resumeOf(gs);
+    resume.hidden = !r;
+    if (!r) return;
+    resume.textContent = '▶ 続きから(' + NAME[r.kind] + ' ' + r.n + '本目・' + fmtAt(r.at) + 'から)';
+    resume.onclick = () => listen(r.kind, r.date, r.n, r.at);
+  };
+  const off = onListen(() => { if (!card.isConnected) { off(); return; } paintCard(); paintResume(); });
   paintCard();
+  paintResume();
   const gs = groupsFor(kind, date, listenBoth());
   prepare(gs, isLatest(gs));
-  return h('div', { class: 'lwrap' }, card, chip);
+  return h('div', { class: 'lwrap' }, card, resume, chip);
 }
 export function listenButton(it) {
+  const at = loadPos().map[keyOf(it.kind, it.date, it.n)];
+  if (at > 3) {
+    return h('button', { class: 'lbtn', type: 'button', onclick: () => listen(it.kind, it.date, it.n, at) }, icon('play', 16), '続きから聞く(' + fmtAt(at) + 'から)');
+  }
   return h('button', { class: 'lbtn', type: 'button', onclick: () => listen(it.kind, it.date, it.n) }, icon('play', 16), 'この記事から聞く');
 }
 export function askLog(it) {
