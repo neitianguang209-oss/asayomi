@@ -24,7 +24,7 @@ export async function sendMemo(seed, body) {
   });
   if (!res || !(res.applied >= 1)) throw new Error('unconfirmed');
 }
-function memoOf(it) {
+export function memoOf(it) {
   const d = it.data;
   if (it.kind === 'trivia') {
     // 以前のページから送った分と同じIDになるよう、種は「日付＋(番号-1)」

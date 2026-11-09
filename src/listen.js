@@ -6,8 +6,9 @@
 //    画面を消しても止まらないよう、できている分を1つの音声につなげて <audio> で流す(記事の切れ目でアプリの処理がいらない)。
 //    ロック画面・イヤホンのボタンで 止める/次の記事/前の記事/5秒戻る・5秒進む ができる。
 //  - 質問は声(音声入力)か文字で。答えは画面に出して読み上げ、読み終えたら続きから流す。
-import { h, clear, stripMarkup } from './util.js';
-import { SB_URL } from './config.js';
+import { h, clear, stripMarkup, stableUuid } from './util.js';
+import { SB_URL, MEMO_TAG } from './config.js';
+import { memoOf } from './actions.js';
 import * as store from './store.js';
 import { icon } from './art.js';
 import { openSheet, toast } from './ui.js';
@@ -101,8 +102,8 @@ function audio() {
     }
   });
   a.addEventListener('timeupdate', tick);
-  a.addEventListener('play', () => { P.ended = false; changed(); setPosition(); });
-  a.addEventListener('pause', () => { remember(true); changed(); setPosition(); });
+  a.addEventListener('play', () => { P.ended = false; changed(); setPosition(); beat(true); });
+  a.addEventListener('pause', () => { remember(true); changed(); setPosition(); beat(true); });
   a.addEventListener('ratechange', setPosition);
   a.addEventListener('ended', () => {
     if (!a.src.startsWith('blob:')) return;
@@ -171,6 +172,7 @@ function tick() {
   // 届いたのにまだつないでいない記事がある: 今の分が残り少なくなったらつなぐ(聞いている最中に何度も読み込み直さない)
   if (P.dirty && (!isFinite(a.duration) || a.duration - a.currentTime < 90)) rebuild();
   remember(false);
+  beat(false);
   // 7割まで聞いたら「読んだ」にする
   if (!P.heard.has(pos.key) && pos.at > pos.dur * 0.7) {
     P.heard.add(pos.key);
@@ -201,6 +203,27 @@ function setPosition() {
       navigator.mediaSession.setPositionState({ duration: a.duration, position: Math.min(a.currentTime, a.duration), playbackRate: a.playbackRate || 1 });
     }
   } catch (e) { /* 古い端末 */ }
+}
+
+/* ---------- いま聞いている話をクラウドに知らせる ----------
+   iPhone のロック画面・車の画面の「再生中」を押すと、同じ住所の別のアプリ(ひきがたり)が開いてしまう。
+   そのとき、ひきがたり側で「いま聞いていた話を思考メモに保存」を出せるよう、今の記事とひとつ前の記事を置いておく。 */
+const NOW = { at: 0, key: null, prev: null };
+function beat(force) {
+  const a = P.audio;
+  if (!a || !P.cur) return;
+  const t = Date.now();
+  if (!force && P.cur === NOW.key && t - NOW.at < 30000) return;
+  if (NOW.key && NOW.key !== P.cur) NOW.prev = NOW.key;
+  NOW.at = t; NOW.key = P.cur;
+  const pack = (key) => {
+    const it = key && itemOfKey(key);
+    if (!it) return null;
+    const m = memoOf(it);
+    return { key, kind: it.kind, name: NAME[it.kind], n: it.n, title: stripMarkup(it.data.title || ''), id: stableUuid(m.seed), body: m.body };
+  };
+  const data = { cur: pack(P.cur), prev: pack(NOW.prev), playing: !a.paused, tag: MEMO_TAG };
+  store.rpc('asayomi_now_set', { p_data: data }, 8000).catch(() => { NOW.at = 0; });
 }
 
 /* ---------- どこまで聞いたか(この端末に残す) ---------- */
