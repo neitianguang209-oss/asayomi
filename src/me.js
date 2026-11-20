@@ -27,7 +27,7 @@ export function openCalendar(kind, curDate) {
       const m = +ym.slice(5, 7);
       const prev = h('button', { type: 'button', 'aria-label': '前の月', disabled: ym <= minYm, onclick: () => { ym = shift(ym, -1); paint(); } }, icon('left', 18));
       const next = h('button', { type: 'button', 'aria-label': '次の月', disabled: ym >= maxYm, onclick: () => { ym = shift(ym, 1); paint(); } }, icon('right', 18));
-      body.append(h('div', { class: 'cal-h' }, prev, h('b', null, y + '年' + m + '月の' + (kind === 'trivia' ? '雑学' : 'ニュース')), next));
+      body.append(h('div', { class: 'cal-h' }, prev, h('b', null, y + '年' + m + '月の' + ({ trivia: '雑学', manner: 'マナー', study: '学問' }[kind] || 'ニュース')), next));
       const grid = h('div', { class: 'cal' });
       for (const w of DOW) grid.append(h('span', { class: 'w' }, w));
       const first = dparts(ym + '-01').w;

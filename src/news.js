@@ -5,11 +5,11 @@ import { CATS } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
-import { dayNotice, reviewNudge, dayNav, xButton, crossButton } from './ui.js';
+import { dayNotice, reviewNudge, dayNav, xButton, crossButton, dayStrip } from './ui.js';
 import { actionBar } from './actions.js';
 import { openTermSheet, attachLookup } from './lookup.js';
 import { openCalendar } from './me.js';
-import { listenCard, listenButton, askLog } from './listen.js';
+import { listenCard, listenButton, askLog, resumeBanner, listenMark } from './listen.js';
 import { claudeButton } from './talk.js';
 
 const view = { tab: 'top', termQ: '', termSort: 'new', termShown: 60 };
@@ -36,6 +36,8 @@ function metaLine(it) {
   if (d.src) m.append('・', h('span', null, d.src));
   m.append('・', h('span', null, mdDate(it.date)));
   if (d.isNew) m.append(newMark());
+  const lm = listenMark(it);
+  if (lm) m.append(lm);
   return m;
 }
 function big(it) {
@@ -45,6 +47,8 @@ function big(it) {
 function row(it, withRole) {
   const b = h('button', { class: 'row' + (store.isRead(it) ? ' read' : ''), type: 'button', onclick: () => open(it) }, it.data.title);
   if (it.data.isNew) b.append(newMark());
+  const lm = listenMark(it);
+  if (lm) b.append(lm);
   if (withRole) b.append(h('small', null, catName(it.data) + (it.data.role ? '・' + it.data.role : '')));
   return b;
 }
@@ -104,6 +108,7 @@ export function renderNews(root, date) {
     if (v === 'flow') { fillFlow(feed); return; }
     if (v === 'terms') { fillTerms(feed); return; }
     if (v === 'top') {
+      feed.append(resumeBanner(), dayStrip('news', date));
       const notice = dayNotice('news', date);
       if (notice) feed.append(notice);
       feed.append(h('div', { class: 'lgrp' }, listenCard('news', date), h('div', { class: 'lalt' }, claudeButton('news', date), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く(続けて雑学も)'))));

@@ -3,7 +3,9 @@ import { h, clear, mdDate, todayJST } from './util.js';
 import * as store from './store.js';
 import { glyph } from './art.js';
 import { go } from './nav.js';
-import { listenCard } from './listen.js';
+import { listenCard, resumeBanner, listenMark } from './listen.js';
+import { dayStrip } from './ui.js';
+import { openCalendar } from './me.js';
 import { claudeButton } from './talk.js';
 
 // 大ジャンル(配信の mannerCat = カリキュラムの genre)。11/4 までの記事は古い分け方なので、言葉から推し量る
@@ -65,11 +67,12 @@ function row(it, conf) {
     h('span', { class: 'rt' },
       h('em', null, conf.tag(it) + '・' + mdDate(it.date)),
       h('b', null, it.data.title),
-      h('small', null, store.briefOf(it))));
+      h('small', null, store.briefOf(it)),
+      listenMark(it)));
 }
-export const renderManner = (root) => renderShelf(root, 'manner');
-export const renderStudy = (root) => renderShelf(root, 'study');
-function renderShelf(root, kind) {
+export const renderManner = (root, date) => renderShelf(root, 'manner', date);
+export const renderStudy = (root, date) => renderShelf(root, 'study', date);
+function renderShelf(root, kind, want) {
   const conf = SHELF[kind];
   const view = views[kind];
   clear(root);
@@ -77,15 +80,19 @@ function renderShelf(root, kind) {
   const wrap = h('div', { class: 'wrap' });
   root.append(wrap);
   const all = conf.items();
-  wrap.append(h('header', { class: 'top' }, h('h1', null, conf.title)));
+  const last = want && store.dayOf(kind, want) ? want : store.latest(kind);
+  const dp = last ? { m: Number(last.slice(5, 7)), d: Number(last.slice(8, 10)) } : null;
+  wrap.append(h('header', { class: 'top' }, h('h1', null, conf.title),
+    last ? h('button', { class: 'date', type: 'button', 'aria-label': '日付をえらぶ', onclick: () => openCalendar(kind, last) }, h('small', null, '日付'), h('b', null, dp.m + '/' + dp.d)) : null));
   wrap.append(h('p', { class: 'greet' }, h('span', null, conf.lead)));
   if (!all.length) {
     wrap.append(h('div', { class: 'boot' }, h('b', null, 'まだ1本もありません'), '次の朝の配信から、毎日たまっていきます。'));
     return;
   }
   // 今日の分(いちばん新しい日)と、聞くボタン
-  const last = store.latest(kind);
   if (last) {
+    wrap.append(resumeBanner(), dayStrip(kind, last));
+    if (last !== store.latest(kind)) wrap.append(h('div', { class: 'notice' }, h('span', null, mdDate(last) + 'の分を表示しています。'), h('button', { type: 'button', onclick: () => go('#/' + kind) }, '最新へ')));
     wrap.append(h('div', { class: 'lgrp tvl' }, listenCard(kind, last),
       h('div', { class: 'lalt' }, claudeButton(kind, last), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く'))));
     const today = h('div', { class: 'mlist' }, h('div', { class: 'mh' }, (last === todayJST() ? '今日の' : mdDate(last) + 'の') + conf.name));

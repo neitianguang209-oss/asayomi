@@ -4,11 +4,11 @@ import { GENRES } from './config.js';
 import * as store from './store.js';
 import { illust, icon, colorOf } from './art.js';
 import { go, replace, back } from './nav.js';
-import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast, crossButton } from './ui.js';
+import { dayNotice, reviewNudge, dayNav, readMark, xButton, toast, crossButton, dayStrip } from './ui.js';
 import { actionBar } from './actions.js';
 import { openCalendar } from './me.js';
 import { claudeButton } from './talk.js';
-import { listenCard, listenButton, askLog } from './listen.js';
+import { listenCard, listenButton, askLog, resumeBanner, listenMark } from './listen.js';
 
 const view = { tab: 'all', past: 10 };
 
@@ -25,6 +25,7 @@ function meta(it, opts) {
   if (d.keyword) m.append(h('span', { class: 'kw' }, d.keyword));
   if (o.date) m.append(h('span', null, jDate(it.date)));
   if (o.marks && store.isRead(it)) m.append(readMark());
+  if (o.marks) { const lm = listenMark(it); if (lm) m.append(lm); }
   if (o.marks && store.isSaved(it)) m.append(h('span', { class: 'readmark savemark' }, icon('save', 13), '保存'));
   return m;
 }
@@ -56,6 +57,7 @@ export function renderTrivia(root, date) {
   if (read) greet.append(h('span', null, read >= items.length ? '✓ ' + items.length + '本ぜんぶ読みました' : items.length + '本中 ' + read + '本 読みました'));
   wrap.append(greet);
 
+  wrap.append(resumeBanner(), dayStrip('trivia', date));
   const notice = dayNotice('trivia', date);
   if (notice) wrap.append(notice);
   wrap.append(h('div', { class: 'lgrp tvl' }, listenCard('trivia', date),

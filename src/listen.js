@@ -150,9 +150,10 @@ function seekTo(key, at) {
 function skip(dir) {
   const pos = where();
   if (!pos) return;
-  if (dir < 0 && pos.at > 4) { seekTo(pos.key, 0); return; }
+  // 「前の記事」はいつでも1つ前の記事の頭へ(いまの記事の頭に戻るだけにしない)。いちばん最初の記事なら、その頭へ
   const i = P.segs.findIndex((s) => s.key === pos.key) + dir;
-  if (i >= 0 && i < P.segs.length) seekTo(P.segs[i].key, 0);
+  if (i >= 0 && i < P.segs.length) seekTo(P.segs[i].key, -(P.segs[i].pre || 0));
+  else if (dir < 0) seekTo(pos.key, 0);
 }
 function nudge(sec) {
   const a = P.audio;
@@ -248,9 +249,12 @@ function remember(now) {
   else if (at > 3) v.map[pos.key] = Math.round(at);
   const keys = Object.keys(v.map);
   if (keys.length > 40) for (const k of keys.slice(0, keys.length - 40)) delete v.map[k];
-  v.last = { key: pos.key, at: Math.round(at), t: Date.now() };
+  v.last = { key: pos.key, at: Math.round(at), dur: Math.round(pos.dur || 0), t: Date.now() };
   savePos(v);
 }
+// 画面を閉じる・別のアプリへ移る・電話で中断される、そのたびに位置を残す(5秒おきの保存だけだと、切れた直前の分が消える)
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') remember(true); });
+window.addEventListener('pagehide', () => remember(true));
 function forgetLast() { const v = loadPos(); v.last = null; savePos(v); }
 const fmtAt = (s) => Math.floor(s / 60) + ':' + String(Math.round(s) % 60).padStart(2, '0');
 // この流れの中で、途中まで聞いていた所(3日以内)。なければ null
@@ -654,7 +658,7 @@ function paint() {
   const a = P.audio;
   const e = entryOf(P.cur);
   const it = itemOfKey(P.cur);
-  el.num.textContent = e ? NAME[e.kind] + ' ' + String(e.n).padStart(2, '0') : '';
+  el.num.textContent = e ? NAME[e.kind] + ' ' + e.n + '/' + store.itemsOf(e.kind, e.date).length : '';
   P.bar.classList.toggle('tv', !!e && e.kind !== 'news');
   el.title.textContent = it ? it.data.title : '';
   const loaded = a && a.src.startsWith('blob:');
@@ -909,6 +913,40 @@ export function listenCard(kind, date) {
   const gs = groupsFor(kind, date, listenBoth());
   prepare(gs, isLatest(gs));
   return h('div', { class: 'lwrap' }, card, resume, chip);
+}
+// どの一覧の上にも出す「ここまで聞きました」。日付・種類をまたいで、最後に聞いていた所へ戻れる
+export function resumeBanner() {
+  const box = h('div', { class: 'rbn', hidden: true });
+  const paintBanner = () => {
+    const { last } = loadPos();
+    const [kind, date, n] = last ? last.key.split(':') : [];
+    const it = last && Date.now() - last.t < 7 * 864e5 && store.item(kind, date, Number(n));
+    if (!it || (playingNow() && P.cur === last.key)) { box.hidden = true; return; }
+    const items = store.itemsOf(kind, date);
+    const dur = last.dur || P.durs.get(last.key) || 0;
+    const ago = Math.round((Date.now() - last.t) / 60000);
+    const when = ago < 1 ? 'さっき' : ago < 60 ? ago + '分前' : ago < 1440 ? Math.round(ago / 60) + '時間前' : Math.round(ago / 1440) + '日前';
+    clear(box).append(
+      h('button', { class: 'rbn-b', type: 'button', onclick: () => listen(kind, date, Number(n), last.at) },
+        h('span', { class: 'rbn-i' }, icon('play', 20)),
+        h('span', { class: 'rbn-t' },
+          h('small', null, '続きから聞く・' + when + 'まで聞いていました'),
+          h('b', null, NAME[kind] + ' ' + n + '/' + items.length + '本目　' + stripMarkup(it.data.title || '')),
+          h('span', { class: 'rbn-p' }, h('i', { style: { width: (dur ? Math.min(100, last.at / dur * 100) : 0) + '%' } })),
+          h('em', null, '🔖 ここまで聞いた ' + fmtAt(last.at) + (dur ? ' / ' + fmtAt(dur) : '') + '　(' + mdShort(date) + ')'))),
+      h('button', { class: 'rbn-x', type: 'button', 'aria-label': '続きからを消す', onclick: () => { forgetLast(); box.hidden = true; } }, icon('x', 14)));
+    box.hidden = false;
+  };
+  const off = onListen(() => { if (!box.isConnected && box.dataset.on) { off(); return; } paintBanner(); });
+  setTimeout(() => { box.dataset.on = '1'; }, 0);
+  paintBanner();
+  return box;
+}
+const mdShort = (d) => Number(d.slice(5, 7)) + '/' + Number(d.slice(8, 10));
+// 一覧の各記事に出す「▶ 2:31まで聞いた」の印
+export function listenMark(it) {
+  const at = loadPos().map[keyOf(it.kind, it.date, it.n)];
+  return at > 3 ? h('span', { class: 'readmark lpart' }, icon('play', 11), fmtAt(at) + 'まで聞いた') : null;
 }
 export function listenButton(it) {
   const at = loadPos().map[keyOf(it.kind, it.date, it.n)];

@@ -55,13 +55,14 @@ let baseSeq = 0;
 async function renderBase() {
   const kind = app.mode;
   if (kind === 'manner' || kind === 'study') { // マナー帳・学問ノートは日付で分けない
-    const key = kind + '||' + app.ver;
+    const sd = app.date[kind] && store.dayOf(kind, app.date[kind]) ? app.date[kind] : '';
+    const key = kind + '|' + sd + '|' + app.ver;
     if (key === app.baseKey) return;
     ++baseSeq;
     app.baseKey = key;
     app.dirty = false;
     document.body.classList.remove('m-news');
-    (kind === 'manner' ? renderManner : renderStudy)(viewEl);
+    (kind === 'manner' ? renderManner : renderStudy)(viewEl, sd);
     return;
   }
   const want = app.date[kind];
@@ -145,6 +146,7 @@ async function route() {
   }
 
   if (head === 'manner' || head === 'study') {
+    app.date[head] = isDate(p[1]) ? p[1] : null;
     app.mode = head;
     try { localStorage.setItem('asayomi:mode', head); } catch (e) { /* 覚えられなくても動く */ }
     closeLayer();
