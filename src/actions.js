@@ -14,7 +14,7 @@ export function linkOf(it) {
 export async function sendMemo(seed, body) {
   const now = new Date().toISOString();
   const id = stableUuid(seed);
-  const res = await store.rpc('shikou_memo_sync', {
+  const res = await store.rpcPass('shikou_memo_sync', {
     p_changes: [{
       id, kind: 'note', deleted: false, updatedAt: now,
       data: { id, body, tagIds: [MEMO_TAG], dateKey: todayJST(), createdAt: now, updatedAt: now },
@@ -37,6 +37,7 @@ export function memoOf(it) {
 }
 export function sendError(e) {
   if (navigator.onLine === false) return '圏外のようです。つながってからもう一度どうぞ。';
+  if (e && e.message === 'nokey') return '合言葉を入れると送れます。もう一度押してください。';
   if (e && e.message === 'unconfirmed') return '保存を確認できませんでした。思考メモで届いているか確かめてください。';
   return '送れませんでした。少し待ってもう一度どうぞ。';
 }
@@ -67,7 +68,7 @@ function openTodoSheet(it, onDone) {
       if (!title) { ta.focus(); return; }
       btn.disabled = true; btn.textContent = '追加中…'; stt.className = 'status'; stt.textContent = '';
       try {
-        const res = await store.rpc('asayomi_todo_add', { p_title: title, p_notes: d.title + '\n' + linkOf(it) });
+        const res = await store.rpcPass('asayomi_todo_add', { p_title: title, p_notes: d.title + '\n' + linkOf(it) });
         if (res && res.ok) {
           store.st.set(store.todoId(it), { at: new Date().toISOString(), title });
           close();

@@ -153,7 +153,17 @@ export function mePage() {
       toast(store.S.status === 'idle' ? '取り込み直しました' : '通信できませんでした');
       paint();
     });
-    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'データ')), h('div', { class: 'me-sec' }, refresh, exp, rebuild));
+    const noPass = !store.getPass() || S.passNeeded;
+    const passRow = h('button', { class: 'me-row', type: 'button' },
+      h('div', { class: 't' }, h('b', null, '同期の合言葉'),
+        h('small', null, noPass ? 'まだ(またはちがう)ので、きろくはこの端末だけにあります。押して入れてください。' : '入っています。押すと入れ直せます。')));
+    passRow.addEventListener('click', async () => {
+      if (!store.askPass()) return;
+      const ok = await store.syncState({ full: true });
+      toast(ok ? 'つながりました' : 'つながりませんでした。合言葉と電波を確かめてください');
+      paint();
+    });
+    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'データ')), h('div', { class: 'me-sec' }, passRow, refresh, exp, rebuild));
 
     wrap.append(h('div', { class: 'me-foot' },
       'あさよみ v' + VERSION, h('br'),

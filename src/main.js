@@ -8,7 +8,7 @@ import { reviewPage } from './review.js';
 import { searchPage, presetSearch } from './search.js';
 import { mePage } from './me.js';
 import { renderManner, renderStudy } from './manner.js';
-import { showLayer, closeLayer, hasLayer, xButton } from './ui.js';
+import { showLayer, closeLayer, hasLayer, xButton, toast } from './ui.js';
 import { icon } from './art.js';
 
 const viewEl = document.getElementById('view');
@@ -189,6 +189,8 @@ function refresh(force) {
 }
 
 async function boot() {
+  // 合言葉がまだの端末では、開いたときに知らせる
+  if (!store.getPass()) setTimeout(() => toast('使った記録の同期には合言葉が必要です(設定の「同期の合言葉」で入れてください)'), 2500);
   buildBar();
   viewEl.append(h('div', { class: 'boot' }, h('div', { class: 'spin' }), '読み込んでいます…'));
   await store.init();

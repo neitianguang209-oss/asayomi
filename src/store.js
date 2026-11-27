@@ -25,6 +25,35 @@ export async function rpc(name, body, timeoutMs) {
   }
 }
 
+/* ---------- 合言葉 ----------
+   使った記録の同期・思考メモとToDoへの追加は、合言葉で守る(家計簿・就活などと共通)。 */
+const PASS_KEY = 'jibun-note:key';
+export function getPass() {
+  try { return localStorage.getItem(PASS_KEY) || ''; } catch (e) { return ''; }
+}
+export function askPass(msg) {
+  const v = (window.prompt(msg || '合言葉を入れてください(家計簿・就活アプリと同じ。合言葉入りのリンクを貼ってもOK)') || '').trim();
+  if (!v) return '';
+  const m = v.match(/[#&]k=([^&\s]+)/);
+  let key = v;
+  if (m) { try { key = decodeURIComponent(m[1]); } catch (e) { key = m[1]; } }
+  try { localStorage.setItem(PASS_KEY, key); } catch (e) { /* 保存できない端末 */ }
+  return key;
+}
+// ボタンを押して送るとき用。合言葉が無ければ聞き、ちがえばもう一度だけ聞く
+export async function rpcPass(name, body) {
+  let key = getPass() || askPass();
+  if (!key) throw new Error('nokey');
+  try {
+    return await rpc(name, { p_key: key, ...body });
+  } catch (e) {
+    if (e.message !== 'bad key') throw e;
+    key = askPass('合言葉がちがうようです。もう一度入れてください');
+    if (!key) throw new Error('nokey');
+    return rpc(name, { p_key: key, ...body });
+  }
+}
+
 /* ---------- 知らせ ---------- */
 const subs = {};
 export function on(ev, fn) { (subs[ev] || (subs[ev] = [])).push(fn); }
@@ -87,6 +116,7 @@ export const S = {
   outbox: new Map(),  // id → 送っていない更新の updatedAt
   meta: {},
   status: 'idle',     // idle | syncing | offline | error
+  passNeeded: false,  // 合言葉がまだ・ちがうので、使った記録を同期できていない
 };
 const ik = (kind, date, n) => kind + '|' + date + '|' + n;
 const dk = (kind, date) => kind + '|' + date;
@@ -389,6 +419,8 @@ export function syncState(opts) {
   return stBusy;
 }
 async function doSyncState(opts) {
+  const key = getPass();
+  if (!key) { S.passNeeded = true; emit('status', S.status); return false; }
   const sending = [];
   for (const id of S.outbox.keys()) {
     const r = S.state.get(id);
@@ -399,11 +431,13 @@ async function doSyncState(opts) {
   const since = full ? 0 : S.meta.stateRev || 0;
   let res;
   try {
-    res = await rpc('asayomi_state_sync', { p_changes: sending, p_since: since, p_device: deviceId() });
+    res = await rpc('asayomi_state_sync', { p_key: key, p_changes: sending, p_since: since, p_device: deviceId() });
   } catch (e) {
+    if (e.message === 'bad key') S.passNeeded = true;
     emit('status', S.status);
     return false;
   }
+  S.passNeeded = false;
   const sent = [];
   for (const c of sending) if (S.outbox.get(c.id) === c.updatedAt) { S.outbox.delete(c.id); sent.push(c.id); }
   let changed = false;
