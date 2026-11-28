@@ -639,10 +639,39 @@ body.has-pl .layer{padding-bottom:calc(132px + var(--sab))}
 .dc.done small{color:#2e9d5b}
 .dc.cur{background:var(--ink);border-color:var(--ink);color:#fff}
 .dc.cur small{color:#ffd9a0}
-.dun{display:block;width:100%;text-align:left;border:0;background:transparent;font:inherit;font-size:13px;font-weight:800;color:#c97a00;padding:4px 2px;cursor:pointer}
-.dun.ok{color:#2e9d5b;cursor:default;margin:0}
 .ud{margin:10px 0;border:1px solid var(--line);border-radius:12px;overflow:hidden}
 .udh{display:flex;justify-content:space-between;align-items:baseline;width:100%;background:#f6f7f9;border:0;padding:9px 12px;font:inherit;cursor:pointer;text-align:left}
 .udh small{font-size:12px;color:#c97a00;font-weight:800}
 .udr{display:block;width:100%;text-align:left;background:#fff;border:0;border-top:1px solid var(--line);padding:10px 12px;font:inherit;font-size:13.5px;line-height:1.5;cursor:pointer;color:var(--ink)}
 .lchip.lres{display:none}
+
+/* 未読リストと、一覧の上の入口 */
+.lchips{display:flex;flex-wrap:wrap;gap:6px;align-self:stretch}
+.ubox{display:flex;align-items:center;gap:12px;width:100%;margin-top:8px;padding:10px 14px 10px 10px;text-align:left;font:inherit;color:var(--ink);background:#fff;border:1.5px solid #e9c46a;border-radius:16px;cursor:pointer}
+.ubox .un{flex:none;min-width:42px;height:42px;padding:0 6px;border-radius:21px;display:grid;place-items:center;background:#e08a00;color:#fff;font-size:17px;font-weight:900}
+.ubox .ut{flex:1;min-width:0;display:block}
+.ubox .ut b{display:block;font-size:15px;font-weight:900}
+.ubox .ut small{display:block;font-size:11.5px;font-weight:700;color:var(--sub)}
+.ubox .ug{flex:none;font-size:12.5px;font-weight:900;color:#a8650a;white-space:nowrap}
+.ubox.ok{border-color:var(--line)}
+.ubox.ok .un{background:#2e9d5b}
+.ubox.ok .ug{color:var(--sub)}
+.ul-tabs{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;scrollbar-width:none}
+.ul-tabs button{flex:none;border:1px solid var(--line);background:#fff;border-radius:999px;padding:7px 12px;font:inherit;font-size:13px;font-weight:800;color:var(--sub);cursor:pointer}
+.ul-tabs button[aria-pressed="true"]{background:var(--ink);border-color:var(--ink);color:#fff}
+.ul-go{display:flex;align-items:center;gap:12px;width:100%;text-align:left;border:0;border-radius:16px;padding:13px 16px;background:#e08a00;color:#fff;font:inherit;cursor:pointer}
+.ul-go svg{flex:none}
+.ul-go b{display:block;font-size:16px;font-weight:900}
+.ul-go small{display:block;font-size:11.5px;font-weight:700;opacity:.92}
+.ul-d{display:flex;align-items:baseline;gap:8px;margin:18px 2px 8px}
+.ul-d b{font-size:14px;font-weight:900}
+.ul-d small{font-size:12px;font-weight:700;color:var(--sub)}
+.ur{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);border-left:5px solid #e8384f;border-radius:12px;padding:4px 8px 4px 0;margin-bottom:6px}
+.ur.k-trivia{border-left-color:#e07a1f}
+.ur.k-manner{border-left-color:#b0812a}
+.ur.k-study{border-left-color:#3d5a8a}
+.ur.now{background:#fff8e6;border-color:#e9c46a}
+.ur-t{flex:1;min-width:0;border:0;background:transparent;text-align:left;font:inherit;color:var(--ink);padding:6px 4px 6px 11px;cursor:pointer}
+.ur-t em{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-style:normal;font-size:11.5px;font-weight:800;color:var(--sub)}
+.ur-t b{display:block;font-size:14.5px;line-height:1.45;font-weight:800}
+.ur-p{flex:none;width:42px;height:42px;border-radius:50%;border:0;background:#fff1d6;color:#a8650a;display:grid;place-items:center;cursor:pointer}

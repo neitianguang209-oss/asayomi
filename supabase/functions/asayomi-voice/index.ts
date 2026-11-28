@@ -443,27 +443,30 @@ async function makeOne(kind: Kind, date: string, n: number, opt: { force?: boole
   return { url: await store(kind, date, n, bytes, info.dur, r.model), dur: info.dur };
 }
 
-/* ---------- 切りかえの一言 ---------- */
+/* ---------- 切りかえの一言・締めの一言 ---------- */
 // 続けて聞くとき、種類が変わる所(ニュース→雑学など)に入れる短い声。日付を言わないので一度作れば使い回せる。
 // 毎朝の先回りが、その日の分を作り終えて手が空いたときに1つずつ作る(足りない間は一言なしでつなぐ)
-const BRIDGE_TEXT: Record<Kind, string> = {
+type BridgeKey = Kind | 'closing';
+const BRIDGE_TEXT: Record<BridgeKey, string> = {
+  // 今日の分をぜんぶ聞き終えた所で流す
+  closing: 'これで、今日の分はおしまいです。今日も一日、頑張ってね。',
   news: 'さて、ここからはニュースをお伝えします。',
   trivia: 'ここでひと息。続いては、雑学の時間です。',
   manner: '続いては、知っておくと安心な、マナーのお話です。',
   study: '続いては、少しじっくり、学問のお話です。',
 };
 const BRIDGE_VER = 'v1';
-type Bridges = Partial<Record<Kind, { path: string; dur: number; ver: string }>>;
+type Bridges = Partial<Record<BridgeKey, { path: string; dur: number; ver: string }>>;
 async function bridges(): Promise<Bridges> {
   try { return JSON.parse((await getSecret('bridges')) || '{}'); } catch { return {}; }
 }
-async function makeBridge(key: string): Promise<{ made?: Kind; error?: string; code?: string } | null> {
+async function makeBridge(key: string): Promise<{ made?: BridgeKey; error?: string; code?: string } | null> {
   const have = await bridges();
-  const kind = (Object.keys(BRIDGE_TEXT) as Kind[]).find((k) => have[k]?.ver !== BRIDGE_VER);
+  const kind = (Object.keys(BRIDGE_TEXT) as BridgeKey[]).find((k) => have[k]?.ver !== BRIDGE_VER);
   if (!kind) return null;
   if (!(await underCap('tts'))) return { error: 'cap', code: 'cap' };
   const models = await modelsFor(key);
-  const r = await synth(key, models.tts, BRIDGE_TEXT[kind], STYLE[kind], true);
+  const r = await synth(key, models.tts, BRIDGE_TEXT[kind], kind === 'closing' ? '明るく温かく、朝に送り出すような語り' : STYLE[kind], true);
   if (!r.ok) return { error: r.msg, code: r.code };
   await count('tts');
   const bytes = stripId3(Uint8Array.from(atob(r.b64), (c) => c.charCodeAt(0)));
@@ -610,6 +613,11 @@ Deno.serve(async (req) => {
         if (!(await getSecret('gemini_key'))) return json({ idle: 'nokey' });
         const hold = await getSecret('pregen_hold'); // 無料枠が切れたら少し休む
         if (hold && Date.now() < Number(hold)) return json({ idle: 'hold' });
+        // 締めの一言がまだ無ければ、先に作る(後回しにすると、無料枠切れでいつまでも作れないことがある)
+        if ((await bridges()).closing?.ver !== BRIDGE_VER) {
+          const b = await makeBridge((await getSecret('gemini_key'))!);
+          if (b?.made) return json({ bridge: b });
+        }
         const order: { kind: Kind; date: string; n: number }[] = [];
         const per: { kind: Kind; date: string; ns: number[] }[] = [];
         for (const kind of ['news', 'trivia', 'manner', 'study'] as Kind[]) {

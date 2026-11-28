@@ -121,8 +121,7 @@ export function mePage() {
       if (v.lastError) t += '　最後のエラー ' + new Date(v.lastError.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + '(' + v.lastError.where + ')';
       vSmall.textContent = t;
     });
-    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'ニュースと雑学の読み上げ')), h('div', { class: 'me-sec' }, vRow,
-      h('div', { class: 'me-row' }, h('div', { class: 't' }, h('b', null, 'Claudeと話して聞く'), h('small', null, 'キーなしで使えます。ニュース・雑学のトップか記事の「Claudeと話して聞く」から、Claudeアプリの音声モードで。')))));
+    wrap.append(h('div', { class: 'sr-h' }, h('span', null, 'ニュースと雑学の読み上げ')), h('div', { class: 'me-sec' }, vRow));
 
     // データ
     const S = store.S;

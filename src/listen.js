@@ -5,6 +5,7 @@
 //  - 「ニュース→雑学」「雑学→ニュース」「片方だけ」を1本の流れ(プレイリスト)にして、
 //    画面を消しても止まらないよう、できている分を1つの音声につなげて <audio> で流す(記事の切れ目でアプリの処理がいらない)。
 //    ロック画面・イヤホンのボタンで 止める/次の記事/前の記事/5秒戻る・5秒進む ができる。
+//  - 聞き終えた記事は「読んだ」になり、次に押すとまだの記事から始まる。その日の分をぜんぶ聞き終えると、締めの一言が流れる。
 //  - 質問は声(音声入力)か文字で。答えは画面に出して読み上げ、読み終えたら続きから流す。
 import { h, clear, stripMarkup, stableUuid } from './util.js';
 import { SB_URL, MEMO_TAG } from './config.js';
@@ -13,7 +14,6 @@ import * as store from './store.js';
 import { icon } from './art.js';
 import { openSheet, toast } from './ui.js';
 import { go } from './nav.js';
-import { openClaude } from './talk.js';
 
 const FN = SB_URL + '/functions/v1/asayomi-voice';
 const SPEEDS = [0.8, 1, 1.25, 1.5, 1.75, 2];
@@ -47,8 +47,8 @@ async function call(action, body, ms) {
 
 /* ---------- 状態 ---------- */
 const P = {
-  sig: '',                // いまの流れ(どの種類のどの日を、どの順で)
-  groups: [],             // [{ kind, date }] 流す順
+  sig: '',                // いまの流れ(流す記事の並び)
+  groups: [],             // [{ kind, date }] 流れに入っている種類と日
   list: [],               // [{ key, kind, date, n }] 流す順の記事
   parts: new Map(),       // key → { buf, dur }
   avail: new Set(),       // サーバーに声が置いてある記事
@@ -60,7 +60,9 @@ const P = {
   prep: null, again: false, progress: '', error: '', stopped: false,
   make: false,            // 足りない声を作ってよいか(最新の日か、聞くボタンを押した流れだけ)
   audio: null, bar: null, shown: false,
-  cur: null, pending: null, waitAfter: null, heard: new Set(), ended: false,
+  cur: null, pending: null, waitAfter: null, ended: false,
+  last: null,             // ひとつ前の timeupdate の位置(自然に流れたのか、飛ばしたのかを見分ける)
+  closeKey: null,         // この記事のあとで締めの一言(その日の分をぜんぶ聞き終える所)
 };
 const speed = () => { const r = Number(store.pref().listenRate); return SPEEDS.indexOf(r) >= 0 ? r : 1; };
 // 続けてもう一方も聞くか(既定は聞く)。設定はクラウドに残り、ほかの端末でも同じ
@@ -81,7 +83,31 @@ function groupsFor(kind, date, both) {
   if (both) for (const k of rest(kind)) { const d = dayFor(k, kind, date); if (d) gs.push({ kind: k, date: d }); }
   return gs.filter((g) => store.itemsOf(g.kind, g.date).length);
 }
-const sigOf = (gs) => gs.map((g) => g.kind + '@' + g.date).join('>');
+const entriesOf = (gs) => gs.flatMap((g) => store.itemsOf(g.kind, g.date).slice().sort((x, y) => x.n - y.n)
+  .map((it) => ({ key: keyOf(g.kind, g.date, it.n), kind: g.kind, date: g.date, n: it.n })));
+const sigOf = (list) => list.map((e) => e.key).join('>');
+const unreadEntry = (e) => { const it = store.item(e.kind, e.date, e.n); return !!it && !store.isRead(it); };
+// start の記事から流すとき: 前の記事は「前の記事」ボタンで戻れるように残し、先は聞いていない・読んでいない記事だけにする
+function onward(list, startKey) {
+  const i = list.findIndex((e) => e.key === startKey);
+  return list.filter((e, j) => j <= i || unreadEntry(e));
+}
+
+/* ---------- その日の分と、締めの一言 ---------- */
+const CLOSING_TEXT = '今日も一日、頑張ってね。';
+const newestDay = () => ORDER.map((k) => store.latest(k)).filter(Boolean).sort().pop() || '';
+const dayEntries = () => { const d = newestDay(); return entriesOf(ORDER.map((k) => ({ kind: k, date: d }))); };
+// この流れを聞き終えると今日の分がぜんぶ終わるなら、今日の分でいちばん後の記事。そうでなければ null
+function closingKeyOf(list) {
+  const today = dayEntries();
+  if (!today.length) return null;
+  const inFlow = new Set(list.map((e) => e.key));
+  if (!today.every((e) => inFlow.has(e.key) || !unreadEntry(e))) return null;
+  const ids = new Set(today.map((e) => e.key));
+  const mine = list.filter((e) => ids.has(e.key));
+  return mine.length ? mine[mine.length - 1].key : null;
+}
+const allTodayHeard = () => dayEntries().every((e) => !unreadEntry(e));
 
 function audio() {
   if (P.audio) return P.audio;
@@ -102,12 +128,14 @@ function audio() {
     }
   });
   a.addEventListener('timeupdate', tick);
+  a.addEventListener('seeking', () => { P.last = null; });
   a.addEventListener('play', () => { P.ended = false; changed(); setPosition(); beat(true); });
   a.addEventListener('pause', () => { remember(true); changed(); setPosition(); beat(true); });
   a.addEventListener('ratechange', setPosition);
   a.addEventListener('ended', () => {
-    if (!a.src.startsWith('blob:')) return;
+    if (a.src !== P.url) return;
     const last = P.segs[P.segs.length - 1];
+    if (last) heard(last);
     // まだ届いていない・つないでいない記事があれば、そろった所で続きを流す
     if (last && (P.prep || P.dirty) && last.key !== P.list[P.list.length - 1].key) {
       P.waitAfter = last.key;
@@ -115,6 +143,8 @@ function audio() {
     } else {
       P.ended = true;
       if (last && last.key === P.list[P.list.length - 1].key) forgetLast(); // 最後まで聞いた: 「続きから」は出さない
+      // 締めの一言の声がまだサーバーに無いときは、端末の読み上げで言う
+      if (last && P.closeKey && !P.segs.some((s) => s.post) && allTodayHeard()) { speak(CLOSING_TEXT); toast(CLOSING_TEXT); }
     }
     paint();
   });
@@ -150,6 +180,7 @@ function seekTo(key, at) {
 function skip(dir) {
   const pos = where();
   if (!pos) return;
+  if (dir > 0 && pos.at > pos.dur * 0.7) heard(pos); // ほとんど聞いてから次へ: 聞いた扱い
   // 「前の記事」はいつでも1つ前の記事の頭へ(いまの記事の頭に戻るだけにしない)。いちばん最初の記事なら、その頭へ
   const i = P.segs.findIndex((s) => s.key === pos.key) + dir;
   if (i >= 0 && i < P.segs.length) seekTo(P.segs[i].key, -(P.segs[i].pre || 0));
@@ -169,18 +200,41 @@ function tick() {
   }
   const pos = where();
   if (!pos) return;
+  markPassed();
+  // 飛ばして締めの一言まで来たが、まだ聞いていない記事が残っているときは、一言を飛ばす
+  const seg = P.segs.find((s) => s.key === pos.key);
+  if (seg && seg.post && pos.at >= seg.dur && !a.paused && !allTodayHeard()) {
+    const next = P.segs[P.segs.indexOf(seg) + 1];
+    if (next) { seekTo(next.key, -next.pre); return; }
+    if (isFinite(a.duration) && a.currentTime < a.duration - 0.3) { a.currentTime = a.duration - 0.1; return; }
+  }
   if (pos.key !== P.cur) { P.cur = pos.key; setMeta(); changed(); }
   // 届いたのにまだつないでいない記事がある: 今の分が残り少なくなったらつなぐ(聞いている最中に何度も読み込み直さない)
   if (P.dirty && (!isFinite(a.duration) || a.duration - a.currentTime < 90)) rebuild();
   remember(false);
   beat(false);
-  // 7割まで聞いたら「読んだ」にする
-  if (!P.heard.has(pos.key) && pos.at > pos.dur * 0.7) {
-    P.heard.add(pos.key);
-    const it = store.item(pos.kind, pos.date, pos.n);
-    if (it && !store.isRead(it)) store.markRead(it);
-  }
   paintTime(pos);
+}
+// 聞き終えた記事を「読んだ」にする
+function heard(e) {
+  const it = store.item(e.kind, e.date, e.n);
+  const v = loadPos(); // 途中の位置の印(「▶ 1:00まで聞いた」)は消す
+  if (v.map[e.key]) { delete v.map[e.key]; savePos(v); }
+  if (it && !store.isRead(it)) store.markRead(it);
+}
+// 流れて通り過ぎた記事(終わりの手前=85%の所か、最後の1.5秒を越えた)を聞いた扱いにする。
+// 画面を消している間に処理が間引かれても、その間に流れた分はまとめて拾う。早送りで飛ばした分は数えない
+function markPassed() {
+  const a = P.audio;
+  const t = a.currentTime / (P.scale || 1);
+  const prev = P.last;
+  P.last = { t, at: Date.now(), url: P.url };
+  if (!prev || prev.url !== P.url || a.paused) return;
+  const moved = t - prev.t;
+  if (moved <= 0 || moved > (Date.now() - prev.at) / 1000 * (a.playbackRate || 1) + 3) return;
+  for (const s of P.segs) {
+    if ([s.start + s.dur * 0.85, s.start + s.dur - 1.5].some((m) => m > prev.t && m <= t)) heard(s);
+  }
 }
 function setMeta() {
   if (!('mediaSession' in navigator)) return;
@@ -245,7 +299,9 @@ function remember(now) {
   savedAt = Date.now();
   const v = loadPos();
   const at = Math.min(pos.at, pos.dur);
-  if (at > pos.dur - 6) delete v.map[pos.key]; // ほぼ聞き終えた記事は、途中の位置を消す
+  const it = store.item(pos.kind, pos.date, pos.n);
+  // ほぼ聞き終えた記事は、途中の位置を消す
+  if (at > pos.dur - 6 || (at >= pos.dur * 0.85 && it && store.isRead(it))) delete v.map[pos.key];
   else if (at > 3) v.map[pos.key] = Math.round(at);
   const keys = Object.keys(v.map);
   if (keys.length > 40) for (const k of keys.slice(0, keys.length - 40)) delete v.map[k];
@@ -257,25 +313,12 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 window.addEventListener('pagehide', () => remember(true));
 function forgetLast() { const v = loadPos(); v.last = null; savePos(v); }
 const fmtAt = (s) => Math.floor(s / 60) + ':' + String(Math.round(s) % 60).padStart(2, '0');
-// この流れの中で、途中まで聞いていた所(3日以内)。なければ null
-function resumeOf(gs) {
-  const { last } = loadPos();
-  if (!last || Date.now() - last.t > 3 * 864e5) return null;
-  const [kind, date, n] = last.key.split(':');
-  if (!gs.some((g) => g.kind === kind && g.date === date)) return null;
-  const items = store.itemsOf(kind, date);
-  if (!items.some((it) => it.n === Number(n))) return null;
-  const first = gs[0];
-  if (last.key === keyOf(first.kind, first.date, Math.min(...store.itemsOf(first.kind, first.date).map((it) => it.n))) && last.at < 5) return null;
-  return { kind, date, n: Number(n), at: last.at };
-}
-
 /* ---------- つなぐ ---------- */
-// 切りかえの一言(「続いては、学問のお話です」など)。種類が変わる所の前に入れる。サーバーに無ければ入れない
-const BRIDGE = new Map(); // kind → { buf, dur }
+// 切りかえの一言(「続いては、学問のお話です」など)は種類が変わる所の前に、締めの一言(closing)は今日の分の終わりに入れる。サーバーに無ければ入れない
+const BRIDGE = new Map(); // kind | 'closing' → { buf, dur }
 let bridgesAsked = 0;
 async function loadBridges() {
-  if (Date.now() - bridgesAsked < 10 * 60e3 || BRIDGE.size === ORDER.length) return;
+  if (Date.now() - bridgesAsked < 10 * 60e3 || BRIDGE.size === ORDER.length + 1) return;
   bridgesAsked = Date.now();
   const r = await call('bridges', {}, 15000);
   for (const [k, x] of Object.entries(r.items || {})) {
@@ -312,10 +355,13 @@ function rebuild() {
     if (br) { bufs.push(br.buf); t += br.dur; }
     const p = P.parts.get(e.key);
     bufs.push(p.buf);
-    segs.push(Object.assign({ start: t, dur: p.dur, pre: br ? br.dur : 0 }, e));
+    const seg = Object.assign({ start: t, dur: p.dur, pre: br ? br.dur : 0, post: 0 }, e);
+    segs.push(seg);
     t += p.dur;
+    const end = e.key === P.closeKey ? BRIDGE.get('closing') : null;
+    if (end) { bufs.push(end.buf); seg.post = end.dur; t += end.dur; }
   }
-  const built = segs.map((s) => (s.pre ? '+' : '') + s.key).join(',');
+  const built = segs.map((s) => (s.pre ? '+' : '') + s.key + (s.post ? '$' : '')).join(',');
   if (!order.length || built === P.built) return;
   const a = audio();
   const loaded = a.src.startsWith('blob:');
@@ -439,36 +485,34 @@ const ERR = {
 };
 
 // 流れを決め直す(同じ流れなら何もしない)。声の控え(parts)は流れが変わっても使い回す
-function setFlow(gs) {
-  const sig = sigOf(gs);
+function setFlow(list) {
+  const sig = sigOf(list);
   if (sig === P.sig) return;
   P.sig = sig;
-  P.groups = gs;
-  P.list = [];
-  for (const g of gs) {
-    for (const it of store.itemsOf(g.kind, g.date).slice().sort((x, y) => x.n - y.n)) {
-      P.list.push({ key: keyOf(g.kind, g.date, it.n), kind: g.kind, date: g.date, n: it.n });
-    }
-  }
-  P.segs = []; P.total = 0; P.built = ''; P.scale = 1; P.dirty = false; P.goal = null;
+  P.list = list;
+  P.groups = [];
+  for (const e of list) if (!P.groups.some((g) => g.kind === e.kind && g.date === e.date)) P.groups.push({ kind: e.kind, date: e.date });
+  P.segs = []; P.total = 0; P.built = ''; P.scale = 1; P.dirty = false; P.goal = null; P.last = null;
   P.error = ''; P.progress = ''; P.stopped = false; P.waitAfter = null; P.pending = null; P.make = false; P.ended = false;
-  P.cur = P.list.length ? P.list[0].key : null;
+  P.closeKey = closingKeyOf(list);
+  P.cur = list.length ? list[0].key : null;
 }
 
-export function prepare(gs, make) {
-  if (!gs || !gs.length) return Promise.resolve();
-  if (sigOf(gs) !== P.sig) {
-    if (P.audio && !P.audio.paused) return Promise.resolve(); // 別の流れを聞いている間は切り替えない
-    setFlow(gs);
+export function prepare(list, make) {
+  if (!list || !list.length) return Promise.resolve();
+  if (sigOf(list) !== P.sig) {
+    // 聞いている流れがある間は、一覧を開いただけでは切り替えない(止めた所を失わないように)
+    if ((P.audio && !P.audio.paused) || (!make && P.shown)) return Promise.resolve();
+    setFlow(list);
   }
   if (make && !P.make) {
     P.make = true; P.stopped = false;
     if (P.prep) P.again = true; // 作らない約束で動いている途中: 終わったらもう一度、今度は作る
   }
+  { const sig = P.sig; loadBridges().then(() => { if (P.sig === sig) soft(); }); }
   // ぜんぶ声がそろっていれば、聞きに行くまでもない(一覧を描き直すたびに通信しないように)。
   // 見ているだけのときも、1分以内に確かめたばかりなら聞きに行かない
-  if (P.groups.length > 1) { const sig = P.sig; loadBridges().then(() => { if (P.sig === sig) soft(); }); }
-  if (!P.prep && P.list.length && P.list.every((e) => P.parts.has(e.key))) return Promise.resolve();
+  if (!P.prep && P.list.every((e) => P.parts.has(e.key))) return Promise.resolve();
   if (!P.prep && !P.make && P.checked === P.sig && Date.now() - P.checkedAt < 60e3) return Promise.resolve();
   if (!P.prep) {
     const sig = P.sig;
@@ -477,7 +521,7 @@ export function prepare(gs, make) {
       // 用意が終わった: 作れなかった記事があれば、それを飛ばして残りをつなぐ
       if (P.sig === sig) soft();
       // 途中で「作ってよい」になった・流れが変わった: いまの流れでもう一度
-      if (P.again || P.sig !== sig) { P.again = false; prepare(P.groups, P.make); }
+      if (P.again || P.sig !== sig) { P.again = false; prepare(P.list, P.make); }
       changed();
     });
   }
@@ -576,17 +620,25 @@ function silentUrl() {
   return silent;
 }
 
-// kind の date の n 本目から流す(n が無ければ最初から)。続けてもう一方も流すかは設定どおり(ボタンを押したその場で呼ぶこと)
-// at を渡すと、その記事の at 秒目から(途中で切れた所の続き)
+// kind の date の n 本目から流す(n が無ければまだの記事から。ぜんぶ聞いていれば最初から)。
+// 続けてもう一方も流すかは設定どおり(ボタンを押したその場で呼ぶこと)。at を渡すと、その記事の at 秒目から
 export function listen(kind, date, n, at) {
+  const all = entriesOf(groupsFor(kind, date, listenBoth()));
+  if (!all.length) { toast('聞ける記事がありません'); return; }
+  let key = n ? keyOf(kind, date, n) : null;
+  if (!key) { const first = all.find(unreadEntry); if (!first) { play(all, all[0].key, 0); return; } key = first.key; at = loadPos().map[key]; }
+  play(onward(all, key), key, at);
+}
+// 決まった並び list の key の記事から流す(ボタンを押したその場で呼ぶこと)
+export function play(list, key, at) {
   const a = audio();
-  const gs = groupsFor(kind, date, listenBoth());
-  if (!gs.length) { toast('聞ける記事がありません'); return; }
-  if (sigOf(gs) !== P.sig) { if (!a.paused) a.pause(); setFlow(gs); }
-  const key = n ? keyOf(kind, date, n) : P.list[0].key;
+  if (!list.length) { toast('聞ける記事がありません'); return; }
+  primeSpeech();
+  if (sigOf(list) !== P.sig) { if (!a.paused) a.pause(); setFlow(list); }
+  else P.closeKey = closingKeyOf(list);
   at = at > 0 ? Math.max(0, at - 3) : 0; // 続きからは、切れた所の少し前から
   P.cur = key;
-  P.waitAfter = null; P.ended = false;
+  P.waitAfter = null; P.ended = false; P.last = null;
   showBar();
   setMeta();
   if (P.segs.some((s) => s.key === key) && P.url) {
@@ -598,7 +650,8 @@ export function listen(kind, date, n, at) {
     a.src = silentUrl();
     a.play().catch(() => {});
   }
-  prepare(gs, true).then(() => { if (P.ready === false) openSetup(() => prepare(P.groups, true)); });
+  prepare(list, true).then(() => { if (P.ready === false) openSetup(() => prepare(P.list, true)); });
+  if (list.every((e) => P.parts.has(e.key))) soft(); // 声がぜんぶ手元にある: すぐつなぐ
   changed();
 }
 export function toggle() {
@@ -619,6 +672,7 @@ function hideBar() {
   document.body.classList.remove('has-pl');
 }
 export function pauseListening() { if (P.audio && !P.audio.paused) P.audio.pause(); }
+export const currentKey = () => (P.shown ? P.cur : null);
 export const playingNow = () => !!(P.audio && !P.audio.paused && P.audio.src.startsWith('blob:'));
 
 /* ---------- 下のプレーヤー ---------- */
@@ -673,8 +727,8 @@ function paintTime(pos) {
   if (!P.bar) return;
   let sub = '';
   if (P.pending && P.pending.wait) sub = P.error || P.progress || '声を用意しています…';
-  else if (P.ended) sub = P.segs.length < P.list.length ? '用意できた' + P.segs.length + '本を聞き終えました' + (P.error ? '(' + P.error + ')' : '') : 'ぜんぶ聞きました(' + P.list.length + '本)。▶でもう一度';
-  else if (pos) sub = fmt(pos.at) + ' / ' + fmt(pos.dur) + (P.progress ? '　' + P.progress : P.error ? '　' + P.error : '');
+  else if (P.ended) sub = P.segs.length < P.list.length ? '用意できた' + P.segs.length + '本を聞き終えました' + (P.error ? '(' + P.error + ')' : '') : P.closeKey && allTodayHeard() ? '今日の分はぜんぶ聞きました。' + CLOSING_TEXT : 'ぜんぶ聞きました(' + P.list.length + '本)。▶でもう一度';
+  else if (pos) sub = fmt(Math.min(pos.at, pos.dur)) + ' / ' + fmt(pos.dur) + (P.progress ? '　' + P.progress : P.error ? '　' + P.error : '');
   else sub = P.error || P.progress;
   el.sub.textContent = sub;
   const a = P.audio;
@@ -697,7 +751,7 @@ export function openSetup(after) {
       P.ready = true; P.stopped = false;
       toast('登録しました。声を用意します');
       close();
-      if (after) after(); else if (P.groups.length) prepare(P.groups, true);
+      if (after) after(); else if (P.list.length) prepare(P.list, true);
     };
     sheet.append(
       h('h3', null, '読み上げの準備'),
@@ -851,8 +905,7 @@ export function openAsk(opt) {
     paintLog();
     sheet.append(h('h3', null, '質問する'),
       h('p', { class: 'sd' }, '「' + it.data.title + '」について、わからないことを聞けます。'),
-      log, ans, mic, h('div', { class: 'krow' }, ta, sendBtn),
-      h('p', { class: 'sd sm' }, 'Claudeと声で話しながら聞きたいときは ', h('a', { href: '#', onclick: (e) => { e.preventDefault(); openClaude(kind, date, n); } }, 'Claudeで開く')));
+      log, ans, mic, h('div', { class: 'krow' }, ta, sendBtn));
   }, () => {
     if (rec) { try { rec.abort(); } catch (e) { /* もう止まっている */ } rec = null; }
     if (window.speechSynthesis) window.speechSynthesis.cancel();
@@ -861,79 +914,98 @@ export function openAsk(opt) {
 }
 
 /* ---------- 一覧・記事に置く入口 ---------- */
-// 一覧の上の「まとめて聞く」。下の小さなボタンで「続けてもう一方も」を切りかえる
+// 一覧の上の「まとめて聞く」。聞いた・読んだ分があれば、まだの記事から始まる。下の小さなボタンで「続けてもう一方も」を切りかえる
 export function listenCard(kind, date) {
   const label = h('b');
   const sub = h('small');
-  const card = h('button', { class: 'lcard', type: 'button', onclick: () => listen(kind, date, 0) },
+  const card = h('button', { class: 'lcard', type: 'button' },
     h('span', { class: 'li' }, icon('ear', 24)),
     h('span', { class: 'lt' }, label, sub),
     h('span', { class: 'go' }, icon('play', 18)));
   const chip = h('button', { class: 'lchip', type: 'button', role: 'switch' });
+  const again = h('button', { class: 'lchip', type: 'button', hidden: true }, '↺ 最初から全部聞く');
+  const isLatest = (list) => list.every((e) => e.date === store.latest(e.kind));
+  // いま押したら流れる並び
+  const flow = () => {
+    const all = entriesOf(groupsFor(kind, date, listenBoth()));
+    const left = all.filter(unreadEntry);
+    return { all, left, list: left.length ? onward(all, left[0].key) : all };
+  };
+  card.addEventListener('click', () => {
+    const f = flow();
+    const first = f.left[0] || f.all[0];
+    if (first) play(f.list, first.key, f.left.length ? loadPos().map[first.key] : 0);
+  });
+  again.addEventListener('click', () => { const f = flow(); if (f.all.length) play(f.all, f.all[0].key, 0); });
   chip.addEventListener('click', () => {
     store.setPref({ listenBoth: !listenBoth() });
-    const gs = groupsFor(kind, date, listenBoth());
-    prepare(gs, isLatest(gs));
+    const f = flow();
+    prepare(f.list, isLatest(f.list));
     paintCard();
   });
-  const isLatest = (gs) => gs.every((g) => g.date === store.latest(g.kind));
   const paintCard = () => {
     const gs = groupsFor(kind, date, listenBoth());
-    const count = (g) => store.itemsOf(g.kind, g.date).length;
-    label.textContent = gs.map((g) => NAME[g.kind] + count(g) + '本').join(' → ') + 'を聞く';
+    const f = flow();
+    const partial = f.left.length > 0 && f.left.length < f.all.length;
+    if (!f.left.length) label.textContent = '✓ ぜんぶ聞きました。もう一度聞く';
+    else if (partial) label.textContent = '続きから聞く(' + NAME[f.left[0].kind] + f.left[0].n + '本目〜・あと' + f.left.length + '本)';
+    else label.textContent = gs.map((g) => NAME[g.kind] + store.itemsOf(g.kind, g.date).length + '本').join(' → ') + 'を聞く';
+    again.hidden = !partial;
     const both = listenBoth();
     chip.setAttribute('aria-checked', String(both));
     const more = rest(kind).filter((k) => store.latest(k));
     chip.textContent = (both ? '✓ ' : '') + '続けて' + more.map((k) => NAME[k]).join('・') + 'も';
     chip.hidden = !more.length;
-    const mine = P.sig === sigOf(gs);
-    const all = gs.reduce((n, g) => n + count(g), 0);
-    const ready = mine ? P.list.filter((e) => P.avail.has(e.key)) : [];
+    const target = f.left.length ? f.left : f.all;
+    const mine = P.sig === sigOf(f.list);
+    const ready = target.filter((e) => P.avail.has(e.key));
     const sec = ready.reduce((n, e) => n + (P.durs.get(e.key) || 0), 0);
     let t = '画面を消しても流れます・倍速もOK';
-    if (mine && ready.length && ready.length < all) t = P.progress || '声の用意 ' + ready.length + '/' + all + '本(残りは聞きはじめると作ります)';
-    if (mine && ready.length === all && sec) t = '約' + Math.max(1, Math.round(sec / 60 / speed())) + '分(' + speed() + '×)・すぐ流せます・画面を消しても流れます';
+    if (mine && ready.length && ready.length < target.length) t = P.progress || '声の用意 ' + ready.length + '/' + target.length + '本(残りは聞きはじめると作ります)';
+    if (ready.length && ready.length === target.length && sec) t = '約' + Math.max(1, Math.round(sec / 60 / speed())) + '分(' + speed() + '×)・すぐ流せます・画面を消しても流れます';
     if (mine && P.error && !P.prep) t = P.error;
     if (mine && P.ready === false) t = 'はじめに Gemini のキーを1回だけ登録します';
     sub.textContent = t;
   };
-  // 途中で止まった・切れたときは「続きから」を出す(いま流している間は出さない)
-  const resume = h('button', { class: 'lchip lres', type: 'button', hidden: true });
-  const paintResume = () => {
-    const gs = groupsFor(kind, date, listenBoth());
-    const r = playingNow() && P.sig === sigOf(gs) ? null : resumeOf(gs);
-    resume.hidden = !r;
-    if (!r) return;
-    resume.textContent = '▶ 続きから(' + NAME[r.kind] + ' ' + r.n + '本目・' + fmtAt(r.at) + 'から)';
-    resume.onclick = () => listen(r.kind, r.date, r.n, r.at);
-  };
-  const off = onListen(() => { if (!card.isConnected) { off(); return; } paintCard(); paintResume(); });
+  const off = onListen(() => { if (!card.isConnected) { off(); return; } paintCard(); });
   paintCard();
-  paintResume();
-  const gs = groupsFor(kind, date, listenBoth());
-  prepare(gs, isLatest(gs));
-  return h('div', { class: 'lwrap' }, card, resume, chip);
+  const f = flow();
+  prepare(f.list, isLatest(f.list));
+  return h('div', { class: 'lwrap' }, card, h('div', { class: 'lchips' }, again, chip));
 }
-// どの一覧の上にも出す「ここまで聞きました」。日付・種類をまたいで、最後に聞いていた所へ戻れる
+// どの一覧の上にも出す「続きから」。聞きかけの記事があればその位置から、聞き終えていれば次のまだの記事から
 export function resumeBanner() {
   const box = h('div', { class: 'rbn', hidden: true });
-  const paintBanner = () => {
+  const target = () => {
     const { last } = loadPos();
-    const [kind, date, n] = last ? last.key.split(':') : [];
-    const it = last && Date.now() - last.t < 7 * 864e5 && store.item(kind, date, Number(n));
-    if (!it || (playingNow() && P.cur === last.key)) { box.hidden = true; return; }
-    const items = store.itemsOf(kind, date);
-    const dur = last.dur || P.durs.get(last.key) || 0;
-    const ago = Math.round((Date.now() - last.t) / 60000);
+    if (!last || Date.now() - last.t > 7 * 864e5) return null;
+    const [kind, date, num] = last.key.split(':');
+    const it = store.item(kind, date, Number(num));
+    if (!it) return null;
+    if (!store.isRead(it)) return { kind, date, n: Number(num), at: last.at, dur: last.dur || P.durs.get(last.key) || 0, last };
+    const all = entriesOf(groupsFor(kind, date, listenBoth()));
+    const i = all.findIndex((e) => e.key === last.key);
+    const next = all.slice(i + 1).concat(all.slice(0, i + 1)).find(unreadEntry);
+    if (!next) return null;
+    return { kind: next.kind, date: next.date, n: next.n, at: loadPos().map[next.key] || 0, dur: P.durs.get(next.key) || 0, last, next: true };
+  };
+  const paintBanner = () => {
+    const r = playingNow() ? null : target();
+    if (!r) { box.hidden = true; return; }
+    const it = store.item(r.kind, r.date, r.n);
+    const items = store.itemsOf(r.kind, r.date);
+    const ago = Math.round((Date.now() - r.last.t) / 60000);
     const when = ago < 1 ? 'さっき' : ago < 60 ? ago + '分前' : ago < 1440 ? Math.round(ago / 60) + '時間前' : Math.round(ago / 1440) + '日前';
+    const note = r.at ? '🔖 ここまで聞いた ' + fmtAt(r.at) + (r.dur ? ' / ' + fmtAt(r.dur) : '')
+      : r.next ? '前の記事までは聞き終わり。この記事から' : 'この記事のはじめから';
     clear(box).append(
-      h('button', { class: 'rbn-b', type: 'button', onclick: () => listen(kind, date, Number(n), last.at) },
+      h('button', { class: 'rbn-b', type: 'button', onclick: () => listen(r.kind, r.date, r.n, r.at) },
         h('span', { class: 'rbn-i' }, icon('play', 20)),
         h('span', { class: 'rbn-t' },
           h('small', null, '続きから聞く・' + when + 'まで聞いていました'),
-          h('b', null, NAME[kind] + ' ' + n + '/' + items.length + '本目　' + stripMarkup(it.data.title || '')),
-          h('span', { class: 'rbn-p' }, h('i', { style: { width: (dur ? Math.min(100, last.at / dur * 100) : 0) + '%' } })),
-          h('em', null, '🔖 ここまで聞いた ' + fmtAt(last.at) + (dur ? ' / ' + fmtAt(dur) : '') + '　(' + mdShort(date) + ')'))),
+          h('b', null, NAME[r.kind] + ' ' + r.n + '/' + items.length + '本目　' + stripMarkup(it.data.title || '')),
+          r.at ? h('span', { class: 'rbn-p' }, h('i', { style: { width: (r.dur ? Math.min(100, r.at / r.dur * 100) : 0) + '%' } })) : null,
+          h('em', null, note + '　(' + mdShort(r.date) + ')'))),
       h('button', { class: 'rbn-x', type: 'button', 'aria-label': '続きからを消す', onclick: () => { forgetLast(); box.hidden = true; } }, icon('x', 14)));
     box.hidden = false;
   };
@@ -962,11 +1034,6 @@ export function askLog(it) {
   box.append(h('button', { class: 'term qbtn', type: 'button', onclick: () => openAsk({ kind: it.kind, date: it.date, n: it.n }) }, icon('ask', 18), 'この' + NAME[it.kind] + 'について質問する'));
   return box;
 }
-
-// 記事がまだ取り込まれていない間に決めた流れは、届いたら組み直す
-store.on('content', () => {
-  if (P.groups.length && !P.list.length) { const gs = P.groups; P.sig = ''; setFlow(gs); }
-});
 
 /* ---------- 設定画面の「ニュースの読み上げ」 ---------- */
 export async function voiceStatus() {

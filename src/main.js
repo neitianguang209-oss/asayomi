@@ -6,6 +6,7 @@ import { renderTrivia, triviaArticle } from './trivia.js';
 import { renderNews, newsArticle, flowPage } from './news.js';
 import { reviewPage } from './review.js';
 import { searchPage, presetSearch } from './search.js';
+import { unreadPage } from './unread.js';
 import { mePage } from './me.js';
 import { renderManner, renderStudy } from './manner.js';
 import { showLayer, closeLayer, hasLayer, xButton, toast } from './ui.js';
@@ -162,6 +163,7 @@ async function route() {
       return searchPage();
     },
     me: () => mePage(),
+    unread: () => unreadPage(),
     flow: () => flowPage(p[1] || ''),
   };
   if (pages[head]) {

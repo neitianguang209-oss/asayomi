@@ -6,7 +6,6 @@ import { go } from './nav.js';
 import { listenCard, resumeBanner, listenMark } from './listen.js';
 import { dayStrip } from './ui.js';
 import { openCalendar } from './me.js';
-import { claudeButton } from './talk.js';
 
 // 大ジャンル(配信の mannerCat = カリキュラムの genre)。11/4 までの記事は古い分け方なので、言葉から推し量る
 export const MANNER_CATS = [
@@ -93,8 +92,7 @@ function renderShelf(root, kind, want) {
   if (last) {
     wrap.append(resumeBanner(), dayStrip(kind, last));
     if (last !== store.latest(kind)) wrap.append(h('div', { class: 'notice' }, h('span', null, mdDate(last) + 'の分を表示しています。'), h('button', { type: 'button', onclick: () => go('#/' + kind) }, '最新へ')));
-    wrap.append(h('div', { class: 'lgrp tvl' }, listenCard(kind, last),
-      h('div', { class: 'lalt' }, claudeButton(kind, last), h('small', null, 'Claudeアプリの音声モードで、話しながら聞く'))));
+    wrap.append(h('div', { class: 'lgrp tvl' }, listenCard(kind, last)));
     const today = h('div', { class: 'mlist' }, h('div', { class: 'mh' }, (last === todayJST() ? '今日の' : mdDate(last) + 'の') + conf.name));
     for (const it of store.itemsOf(kind, last)) today.append(row(it, conf));
     wrap.append(today);

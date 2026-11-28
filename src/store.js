@@ -503,6 +503,11 @@ export function markRead(it) {
   if (it.kind !== 'news' && pref().autoReview) addCard(cardIdOf(it));
   return true;
 }
+// 未読(読んでも聞いてもいない)。取り込んだ昔の雑学(legacy)は数えない
+export function isUnread(it) { return !isRead(it) && !(it.data && it.data.legacy); }
+// サーバーに声を置いておく日数(8日)の中のはじめの日
+export const recentFrom = () => addDays(todayJST(), -7);
+export function unreadRecent(kind) { const from = recentFrom(); return allItems(kind).filter((it) => it.date >= from && isUnread(it)); }
 export function readCount(kind, date) { return itemsOf(kind, date).filter(isRead).length; }
 // 見逃した雑学: アプリで届いた分(取り込んだ昔の分は除く)のうち、まだ開いていないもの。新しい日から。
 export function missedTrivia() {

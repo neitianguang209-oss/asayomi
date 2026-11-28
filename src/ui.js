@@ -140,24 +140,13 @@ export function crossButton(it) {
 /* ---------- 日付の帯(見逃した日・まだ読んでいない日がひと目でわかる) ---------- */
 const KIND_NAME = { news: 'ニュース', trivia: '雑学', manner: 'マナー', study: '学問' };
 const toDay = (kind, d) => { replace('#/' + kind + (d === store.latest(kind) ? '' : '/' + d)); window.scrollTo(0, 0); };
-// 読んでいない記事がある日(新しい順)。取り込んだ昔の雑学(legacy)は数えない
-function unreadDays(kind) {
-  const out = [];
-  for (const d of store.dates(kind)) {
-    const left = store.itemsOf(kind, d).filter((it) => !store.isRead(it) && !(it.data && it.data.legacy));
-    if (left.length) out.push({ date: d, left });
-  }
-  return out;
-}
 export function dayStrip(kind, curDate) {
   const ds = store.dates(kind).slice(0, 21);
   const wrap = h('div', { class: 'dstrip' });
-  const unread = unreadDays(kind);
-  const total = unread.reduce((n, x) => n + x.left.length, 0);
   const row = h('div', { class: 'dsr' });
   for (const d of ds) {
     const items = store.itemsOf(kind, d);
-    const left = items.filter((it) => !store.isRead(it) && !(it.data && it.data.legacy)).length;
+    const left = items.filter(store.isUnread).length;
     const p = d.slice(5).replace('-', '/').replace(/^0/, '').replace('/0', '/');
     const b = h('button', { type: 'button', class: 'dc' + (d === curDate ? ' cur' : '') + (left ? ' new' : ' done'), 'aria-label': jDate(d) + (left ? '(未読' + left + '本)' : '(ぜんぶ読んだ)') },
       h('b', null, p), h('small', null, left ? '未読' + left : '✓'));
@@ -165,29 +154,15 @@ export function dayStrip(kind, curDate) {
     row.append(b);
   }
   wrap.append(row);
-  if (total) {
-    wrap.append(h('button', { class: 'dun', type: 'button', onclick: () => openUnread(kind) },
-      '📭 まだ読んでいない ' + total + '本(' + unread.length + '日分)を見る ›'));
-  } else {
-    wrap.append(h('p', { class: 'dun ok' }, '✓ ' + KIND_NAME[kind] + 'は、見逃しなし'));
-  }
+  // まだ読んでいない・聞いていない分(全部の種類。声が残っている直近の日)
+  const counts = Object.keys(KIND_NAME).map((k) => [k, store.unreadRecent(k).length]).filter((x) => x[1]);
+  const total = counts.reduce((n, x) => n + x[1], 0);
+  wrap.append(h('button', { class: 'ubox' + (total ? '' : ' ok'), type: 'button', onclick: () => go('#/unread') },
+    h('span', { class: 'un' }, total ? String(total) : '✓'),
+    h('span', { class: 'ut' }, h('b', null, total ? '未読リスト' : '未読はありません'),
+      h('small', null, total ? counts.map(([k, n]) => KIND_NAME[k] + n).join('・') : 'ここ1週間の分はぜんぶ読みました')),
+    h('span', { class: 'ug' }, total ? '見る・聞く ›' : '›')));
   // いま帯の中で見えている日が右端に隠れないように
   setTimeout(() => { const c = row.querySelector('.cur'); if (c) row.scrollLeft = Math.max(0, c.offsetLeft - 60); }, 0);
   return wrap;
-}
-export function openUnread(kind) {
-  openSheet((sheet, close) => {
-    const days = unreadDays(kind);
-    sheet.append(h('h3', null, 'まだ読んでいない' + KIND_NAME[kind]),
-      h('p', { class: 'sd' }, '開くと「読んだ」になって、ここから消えます。聞いた記事(7割まで)も読んだ扱いです。'));
-    if (!days.length) sheet.append(h('p', { class: 'sd' }, '見逃しはありません。'));
-    for (const { date, left } of days.slice(0, 40)) {
-      const box = h('div', { class: 'ud' },
-        h('button', { class: 'udh', type: 'button', onclick: () => { close(); toDay(kind, date); } }, h('b', null, jDate(date)), h('small', null, '未読' + left.length + '本　この日をひらく ›')));
-      for (const it of left) {
-        box.append(h('button', { class: 'udr', type: 'button', onclick: () => { close(); go('#/' + kind + '/' + it.date + '/' + it.n); } }, it.data.title));
-      }
-      sheet.append(box);
-    }
-  });
 }
